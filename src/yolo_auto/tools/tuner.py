@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from itertools import product
 from typing import Any
 
+from yolo_auto.errors import err, ok
 from yolo_auto.feishu import FeishuNotifier
+from yolo_auto.models import JobStatus
 from yolo_auto.ssh_client import SSHClient
+from yolo_auto.state_store import JobStateStore
 from yolo_auto.tools.status import get_status
 from yolo_auto.tools.training import TrainRequest, start_training
 from yolo_auto.tracker import MLflowTracker
@@ -22,6 +26,8 @@ class TuneRequest:
     max_trials: int
     work_dir: str
     jobs_dir: str
+    trial_timeout_seconds: int = 1800
+    poll_interval_seconds: int = 10
 
 
 def auto_tune(
@@ -29,6 +35,7 @@ def auto_tune(
     ssh_client: SSHClient,
     notifier: FeishuNotifier,
     tracker: MLflowTracker,
+    state_store: JobStateStore,
 ) -> dict[str, Any]:
     learning_rates = req.search_space.get("learningRate", [0.01])
     batches = req.search_space.get("batch", [16])
@@ -51,16 +58,55 @@ def auto_tune(
             work_dir=req.work_dir,
             jobs_dir=req.jobs_dir,
         )
-        train_result = start_training(train_req, ssh_client, notifier, tracker)
+        train_result = start_training(train_req, ssh_client, notifier, tracker, state_store)
+        if not train_result.get("ok", False):
+            trials.append(
+                {
+                    "jobId": job_id,
+                    "runId": "",
+                    "params": {"learningRate": lr, "batch": batch, "imgSize": img_size},
+                    "metric": 0.0,
+                    "status": JobStatus.FAILED.value,
+                    "error": train_result.get("error", "start failed"),
+                }
+            )
+            continue
         run_id = str(train_result["runId"])
-        status = get_status(job_id, run_id, req.jobs_dir, ssh_client, tracker)
-        metric_value = float(status.get("metrics", {}).get("map5095", 0.0))
+        deadline = int(time.time()) + req.trial_timeout_seconds
+        latest_status: dict[str, Any] = {}
+        while int(time.time()) <= deadline:
+            latest_status = get_status(job_id, run_id, state_store, ssh_client, tracker, notifier)
+            if not latest_status.get("ok", False):
+                break
+            status_value = str(latest_status.get("status", JobStatus.RUNNING.value))
+            if status_value in {
+                JobStatus.COMPLETED.value,
+                JobStatus.FAILED.value,
+                JobStatus.STOPPED.value,
+            }:
+                break
+            time.sleep(req.poll_interval_seconds)
+
+        metric_value = float(latest_status.get("metrics", {}).get("map5095", 0.0))
+        trial_status = str(latest_status.get("status", JobStatus.FAILED.value))
+        if int(time.time()) > deadline and trial_status == JobStatus.RUNNING.value:
+            trial_status = JobStatus.FAILED.value
+            latest_status = err(
+                error_code="TRIAL_TIMEOUT",
+                message=f"trial timeout after {req.trial_timeout_seconds}s",
+                retryable=True,
+                hint="提高 trial_timeout_seconds 或减少 epochs",
+                payload={"jobId": job_id, "runId": run_id},
+            )
+
         trials.append(
             {
                 "jobId": job_id,
                 "runId": run_id,
                 "params": {"learningRate": lr, "batch": batch, "imgSize": img_size},
                 "metric": metric_value,
+                "status": trial_status,
+                "error": latest_status.get("error") if not latest_status.get("ok", True) else None,
             }
         )
         progress_message = (
@@ -71,15 +117,24 @@ def auto_tune(
             progress_message
         )
 
-    if not trials:
-        raise ValueError("No tuning trials executed")
-    best_trial = max(trials, key=lambda item: item["metric"])
-    return {
-        "envId": req.env_id,
-        "baseJobId": req.base_job_id,
-        "bestJobId": best_trial["jobId"],
-        "bestMetrics": {"map5095": best_trial["metric"]},
-        "bestParams": best_trial["params"],
-        "trials": trials,
-    }
+    succeeded_trials = [item for item in trials if item["status"] == JobStatus.COMPLETED.value]
+    if not succeeded_trials:
+        return err(
+            error_code="NO_SUCCESSFUL_TRIALS",
+            message="all tuning trials failed",
+            retryable=True,
+            hint="缩小 searchSpace 或先降低模型/epoch 确认可训练",
+            payload={"envId": req.env_id, "baseJobId": req.base_job_id, "trials": trials},
+        )
+    best_trial = max(succeeded_trials, key=lambda item: item["metric"])
+    return ok(
+        {
+            "envId": req.env_id,
+            "baseJobId": req.base_job_id,
+            "bestJobId": best_trial["jobId"],
+            "bestMetrics": {"map5095": best_trial["metric"]},
+            "bestParams": best_trial["params"],
+            "trials": trials,
+        }
+    )
 

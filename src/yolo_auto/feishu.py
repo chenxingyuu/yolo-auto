@@ -9,7 +9,11 @@ class FeishuNotifier:
 
     def send_text(self, text: str) -> None:
         payload = {"msg_type": "text", "content": {"text": text}}
-        with httpx.Client(timeout=10) as client:
-            response = client.post(self._webhook_url, json=payload)
-            response.raise_for_status()
+        try:
+            with httpx.Client(timeout=10) as client:
+                response = client.post(self._webhook_url, json=payload)
+                response.raise_for_status()
+        except Exception:
+            # 通知失败不应阻断训练主流程
+            return
 

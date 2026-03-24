@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from yolo_auto.config import load_settings
 from yolo_auto.feishu import FeishuNotifier
 from yolo_auto.ssh_client import SSHClient, SSHConfig
+from yolo_auto.state_store import JobStateStore
 from yolo_auto.tools.setup_env import setup_env
 from yolo_auto.tools.status import get_status
 from yolo_auto.tools.training import TrainRequest, start_training, stop_training
@@ -33,6 +34,7 @@ TRACKER = MLflowTracker(
         experiment_name=SETTINGS.mlflow_experiment_name,
     )
 )
+STATE_STORE = JobStateStore(SETTINGS.yolo_state_file)
 
 
 class StartTrainingInput(BaseModel):
@@ -84,17 +86,17 @@ def yolo_start_training(payload: StartTrainingInput) -> dict[str, Any]:
         work_dir=SETTINGS.yolo_work_dir,
         jobs_dir=SETTINGS.yolo_jobs_dir,
     )
-    return start_training(req, SSH, NOTIFIER, TRACKER)
+    return start_training(req, SSH, NOTIFIER, TRACKER, STATE_STORE)
 
 
 @mcp.tool(name="yolo.get_status")
 def yolo_get_status(payload: StatusInput) -> dict[str, Any]:
-    return get_status(payload.jobId, payload.runId, SETTINGS.yolo_jobs_dir, SSH, TRACKER)
+    return get_status(payload.jobId, payload.runId, STATE_STORE, SSH, TRACKER, NOTIFIER)
 
 
 @mcp.tool(name="yolo.stop_training")
 def yolo_stop_training(payload: StopTrainingInput) -> dict[str, Any]:
-    return stop_training(payload.jobId, payload.runId, SSH, NOTIFIER, TRACKER)
+    return stop_training(payload.jobId, payload.runId, SSH, NOTIFIER, TRACKER, STATE_STORE)
 
 
 @mcp.tool(name="yolo.auto_tune")
@@ -110,7 +112,7 @@ def yolo_auto_tune(payload: AutoTuneInput) -> dict[str, Any]:
         work_dir=SETTINGS.yolo_work_dir,
         jobs_dir=SETTINGS.yolo_jobs_dir,
     )
-    return auto_tune(req, SSH, NOTIFIER, TRACKER)
+    return auto_tune(req, SSH, NOTIFIER, TRACKER, STATE_STORE)
 
 
 def main() -> None:

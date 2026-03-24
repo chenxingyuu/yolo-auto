@@ -21,12 +21,14 @@ class MLflowTracker:
         self._experiment_name = config.experiment_name
 
     def start_run(self, job_id: str, config: dict[str, Any]) -> str:
+        if mlflow.active_run() is not None:
+            mlflow.end_run(status="KILLED")
         run = mlflow.start_run(run_name=job_id)
         mlflow.log_params(config)
         return run.info.run_id
 
     def log_epoch(self, run_id: str, metrics: dict[str, float], step: int) -> None:
-        with mlflow.start_run(run_id=run_id):
+        with mlflow.start_run(run_id=run_id, nested=False):
             mlflow.log_metrics(metrics, step=step)
 
     def finish_run(self, run_id: str, best_model_path: str | None = None) -> None:
