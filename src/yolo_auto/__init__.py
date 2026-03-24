@@ -1,0 +1,2 @@
+"""YOLO Auto MCP package."""
+

@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "yolo-auto": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/Users/chenxingyu/work/chenxingyu/yolo-auto",
+        "python",
+        "-m",
+        "yolo_auto.server"
+      ]
+    }
+  }
+}
+
