@@ -141,8 +141,28 @@ def get_status(
         updated = state_store.update_status(job_id, target, now)
         if updated.last_notified_state != target:
             title = "[YOLO] 状态变更"
+            mlflow_url = tracker.get_run_url(effective_run_id)
+            header_color = "red" if target == JobStatus.FAILED else "green"
             body = f"job={job_id}\n状态={target.value}\nrunId={effective_run_id}"
-            notifier.send_training_update(title, body)
+            if target == JobStatus.FAILED and log_content.strip():
+                body = f"{body}\n\n**train.log(尾部)**\n```\n{log_content.strip()}\n```"
+            notifier.send_rich_card(
+                title=title,
+                md_text=body,
+                header_color=header_color,  # type: ignore[arg-type]
+                actions=(
+                    [
+                        {
+                            "tag": "button",
+                            "text": {"tag": "plain_text", "content": "查看 MLflow"},
+                            "type": "url",
+                            "url": mlflow_url,
+                        }
+                    ]
+                    if mlflow_url
+                    else None
+                ),
+            )
             state_store.mark_notified(job_id, target, now)
         if target == JobStatus.FAILED:
             return err(
