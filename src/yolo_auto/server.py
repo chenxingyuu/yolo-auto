@@ -20,6 +20,7 @@ from yolo_auto.tools.setup_env import setup_env
 from yolo_auto.tools.status import get_status
 from yolo_auto.tools.training import TrainRequest, start_training, stop_training
 from yolo_auto.tools.tuner import TuneRequest, auto_tune
+from yolo_auto.tools.validate import run_validation
 from yolo_auto.tracker import MLflowTracker, TrackerConfig
 
 mcp = FastMCP("yolo-auto")
@@ -342,6 +343,47 @@ def yolo_stop_training(
     需提供 jobId 与 runId；成功返回更新后的任务状态或停止确认字段。
     """
     return stop_training(jobId, runId, SSH, NOTIFIER, TRACKER, STATE_STORE)
+
+
+@mcp.tool(name="yolo_validate")
+def yolo_validate(
+    jobId: Annotated[str, Field(description="要在验证集上运行验证的任务 ID。")],
+    dataConfigPath: Annotated[
+        str | None,
+        Field(
+            description="可选：验证数据集 YAML（远程）。不传则用 job record 的 dataConfigPath。"
+        ),
+    ] = None,
+    imgSize: Annotated[
+        int | None,
+        Field(description="可选：验证 imgsz=。不传则使用 Ultralytics 默认。"),
+    ] = None,
+    batch: Annotated[
+        int | None,
+        Field(description="可选：验证 batch=。不传则使用 Ultralytics 默认。"),
+    ] = None,
+    device: Annotated[
+        str | None,
+        Field(description="可选：验证 device=（如 0、cpu）。"),
+    ] = None,
+    extraArgs: Annotated[
+        dict[str, Any] | None,
+        Field(description="可选：透传 Ultralytics CLI 参数，转为 key=value 形式。"),
+    ] = None,
+) -> dict[str, Any]:
+    """基于训练完成后的最佳权重在验证集上跑 yolo detect val。"""
+    return run_validation(
+        jobId,
+        STATE_STORE,
+        SSH,
+        SETTINGS.yolo_jobs_dir,
+        SETTINGS.yolo_work_dir,
+        data_config_path=dataConfigPath,
+        img_size=imgSize,
+        batch=batch,
+        device=device,
+        extra_args=extraArgs,
+    )
 
 
 @mcp.tool(name="yolo_auto_tune")

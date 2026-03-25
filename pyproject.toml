@@ -17,6 +17,14 @@ dependencies = [
 yolo-auto-mcp = "yolo_auto.server:main"
 yolo-auto-watch = "yolo_auto.worker:main"
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4.0",
+    # 仅用于本地排查/CI 兼容：pytest-cov 不强制，当前测试框架未使用
+    "pytest-cov>=5.0",
+]
+
 [tool.uv]
 package = true
 
@@ -26,3 +34,6 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
