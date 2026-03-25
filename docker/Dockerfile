@@ -14,9 +14,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN mkdir -p /var/run/sshd
 
 ENV WORKDIR=/workspace/yolo-auto
-RUN mkdir -p ${WORKDIR} /workspace/datasets /workspace/jobs
+RUN mkdir -p ${WORKDIR} /workspace/datasets /workspace/jobs /workspace/models
 
 WORKDIR ${WORKDIR}
+
+RUN cd /workspace/models \
+    && python -c "from ultralytics import YOLO; \
+models = [ \
+    'yolov5n.pt','yolov5s.pt','yolov5m.pt','yolov5l.pt','yolov5x.pt', \
+    'yolov8n.pt','yolov8s.pt','yolov8m.pt','yolov8l.pt','yolov8x.pt', \
+    'yolo11n.pt','yolo11s.pt','yolo11m.pt','yolo11l.pt','yolo11x.pt', \
+    'yolo26n.pt','yolo26s.pt','yolo26m.pt','yolo26l.pt','yolo26x.pt', \
+]; [(YOLO(m), print(f'OK: {m}')) for m in models]"
 
 # SSH 配置：禁用密码登录，只允许公钥，允许 root 公钥登录
 RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config && \

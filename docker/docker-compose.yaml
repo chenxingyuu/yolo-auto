@@ -1,6 +1,6 @@
 services:
   yolo-auto:
-    image: registry.cn-hangzhou.aliyuncs.com/daxx/yolo-auto:latest
+    image: registry.cn-hangzhou.aliyuncs.com/daxx/yolo-auto-container:latest
     build:
       context: ..
       dockerfile: docker/Dockerfile
@@ -12,10 +12,13 @@ services:
     volumes:
       - datasets:/workspace/datasets
       - jobs:/workspace/jobs
+      - models:/workspace/models
       - /root/.ssh/authorized_keys:/root/.ssh/authorized_keys:ro
 
 volumes:
   jobs:
     driver: local
   datasets:
+    driver: local
+  models:
     driver: local

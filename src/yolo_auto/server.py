@@ -462,6 +462,7 @@ def resource_config() -> str:
             "workDir": SETTINGS.yolo_work_dir,
             "datasetsDir": SETTINGS.yolo_datasets_dir,
             "jobsDir": SETTINGS.yolo_jobs_dir,
+            "modelsDir": SETTINGS.yolo_models_dir,
             "stateFile": SETTINGS.yolo_state_file,
             "mlflow": {
                 "trackingUri": SETTINGS.mlflow_tracking_uri,
@@ -566,6 +567,40 @@ def resource_datasets() -> str:
 
 
 @mcp.resource(
+    "yolo://models",
+    name="remote-models",
+    description="远程服务器 models 目录下的预训练权重文件（.pt）列表及大小。",
+    mime_type="application/json",
+)
+def resource_models() -> str:
+    try:
+        stdout, _, code = SSH.execute(
+            f"find {SETTINGS.yolo_models_dir} -maxdepth 2 -name '*.pt' -exec"
+            " ls -lh {} \\; 2>/dev/null | awk '{print $5, $NF}' | sort",
+            timeout=10,
+        )
+        if code != 0:
+            models: list[dict[str, str]] = []
+        else:
+            models = []
+            for line in stdout.splitlines():
+                parts = line.strip().split(None, 1)
+                if len(parts) == 2:
+                    models.append({"size": parts[0], "path": parts[1]})
+    except Exception:
+        models = []
+    return json.dumps(
+        {
+            "modelsDir": SETTINGS.yolo_models_dir,
+            "models": models,
+            "count": len(models),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+@mcp.resource(
     "yolo://guide/training-params",
     name="training-params-guide",
     description="Ultralytics YOLO 训练参数速查与推荐值范围，帮助模型给出合理的参数建议。",
@@ -597,12 +632,18 @@ def resource_training_params_guide() -> str:
 | closeMosaic | close_mosaic | 10 | 最后 10–20 epoch 关 mosaic |
 
 ## 模型选择指南
-| 场景 | 推荐模型 | imgSize | batch |
-|------|----------|---------|-------|
-| 快速验证 | yolov8n.pt | 640 | 32 |
-| 生产部署(速度优先) | yolov8s.pt | 640 | 16 |
-| 生产部署(精度优先) | yolov8m/l.pt | 1280 | 8 |
-| 竞赛/极致精度 | yolov8x.pt | 1280 | 4–8 |
+容器内预下载权重位于 `/workspace/models/`，涵盖 v5/v8/11/26 全系列 detect，
+可直接用绝对路径避免重复下载。
+
+| 场景 | model 参数 | imgSize | batch |
+|------|-----------|---------|-------|
+| 快速验证 | /workspace/models/yolo26n.pt | 640 | 32 |
+| 生产部署(速度优先) | /workspace/models/yolo26s.pt | 640 | 16 |
+| 生产部署(精度优先) | /workspace/models/yolo26m.pt 或 l | 1280 | 8 |
+| 竞赛/极致精度 | /workspace/models/yolo26x.pt | 1280 | 4–8 |
+| 旧版兼容 | /workspace/models/yolov8*.pt 或 yolov5*.pt | 640 | 16 |
+
+可用系列：yolov5n~x / yolov8n~x / yolo11n~x / yolo26n~x（共 20 个 .pt）
 
 ## 调参经验
 - **欠拟合**: 增大模型(n→s→m)、增加 epochs、提高 lr

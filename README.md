@@ -72,7 +72,7 @@ cp .env.example .env
 | `FEISHU_MESSAGE_MODE` | `text` 或 `card`（`card` 使用飞书 `post`，失败时降级为文本） |
 | `YOLO_PRIMARY_METRIC` | 主指标名，写入 MLflow 与里程碑文案，如 `map5095` |
 | `MLFLOW_*` | 追踪后端与实验名 |
-| `YOLO_WORK_DIR` / `JOBS_DIR` / … | 远程路径与本地 `jobs.json` |
+| `YOLO_WORK_DIR` / `JOBS_DIR` / `MODELS_DIR` / … | 远程路径（工作区、输出、预训练权重）与本地 `jobs.json` |
 | `YOLO_WATCH_POLL_INTERVAL_SECONDS` | 后台 Worker 轮询间隔（秒） |
 | `YOLO_WATCH_LOCK_FILE` | Worker 文件锁路径，避免多实例抢锁 |
 
@@ -108,7 +108,7 @@ cp .env.example .env
 uv run ruff check .
 ```
 
-### 3.2 验证 MCP 工具注册数量（应为 7）
+### 3.2 验证 MCP 注册数量（7 tools + 6 prompts + 7 resources）
 
 ```bash
 YOLO_SSH_HOST=127.0.0.1 \
@@ -122,10 +122,16 @@ YOLO_WORK_DIR=/workspace/yolo-auto \
 YOLO_DATASETS_DIR=/workspace/datasets \
 YOLO_JOBS_DIR=/workspace/jobs \
 YOLO_STATE_FILE=.state/jobs.json \
-uv run python -c "from yolo_auto.server import mcp; print('mcp-tools-ok', len(mcp._tool_manager.list_tools()))"
+uv run python -c "
+from yolo_auto.server import mcp
+t=len(mcp._tool_manager.list_tools())
+p=len(mcp._prompt_manager.list_prompts())
+r=len(mcp._resource_manager.list_resources())
+print(f'tools={t} prompts={p} resources={r}')
+"
 ```
 
-预期：`mcp-tools-ok 7`。
+预期：`tools=7 prompts=6 resources=7`。
 
 ## 4. MCP 工具一览
 
@@ -140,6 +146,33 @@ uv run python -c "from yolo_auto.server import mcp; print('mcp-tools-ok', len(mc
 | `yolo_get_job` | 按 `jobId` 查看记录；`refresh=true` 时顺带调用 `get_status` |
 
 在对话中可以自然语言描述，由模型按需调用上述工具。
+
+## 4.1 MCP Prompts（提示模板）一览
+
+Prompts 是预置的工作流模板，客户端（Cursor / Claude）可按名选用，一句话触发复杂流程。
+
+| Prompt 名 | 参数 | 作用 |
+|-----------|------|------|
+| `quick-train` | `dataset`（必填）, `model`, `epochs` | 环境检查 → 启动训练 → 首次状态确认，全流程一键启动 |
+| `dashboard` | 无 | 拉取所有任务、刷新 running 指标，生成全局状态看板 |
+| `compare-experiments` | `job_ids`（逗号分隔） | 对比多个实验的指标与参数，给出最佳推荐和下一步建议 |
+| `smart-tune` | `dataset`（必填）, `model`, `goal` | 根据业务目标设计搜索空间并一键执行 auto_tune |
+| `diagnose` | `job_id` | 诊断训练异常：卡住/失败/指标差，给出修复方案 |
+| `report` | `period`（默认"今天"） | 生成可直接转发的训练进展报告（摘要 + 明细 + 计划） |
+
+## 4.2 MCP Resources（只读上下文）一览
+
+Resources 是只读数据端点，客户端可按需拉取为模型提供上下文，不消耗 tool 调用额度。
+
+| Resource URI | 名称 | 说明 |
+|-------------|------|------|
+| `yolo://config` | current-config | 当前生效的环境配置概要（已脱敏，不含密钥） |
+| `yolo://jobs/active` | active-jobs | 运行中/排队中的任务列表（本地读取，不触发 SSH） |
+| `yolo://jobs/history` | job-history | 最近 50 条任务记录（含已完成/失败/停止） |
+| `yolo://mlflow/leaderboard` | mlflow-leaderboard | MLflow 实验按主指标排序的 Top 10 排行榜 |
+| `yolo://datasets` | remote-datasets | 远程 datasets 目录下的 YAML 配置文件列表 |
+| `yolo://models` | remote-models | 远程 models 目录下的预训练权重文件（.pt）列表及大小 |
+| `yolo://guide/training-params` | training-params-guide | YOLO 训练参数速查与推荐值（Markdown 格式） |
 
 ## 5. 可选：后台 Watch Worker
 
