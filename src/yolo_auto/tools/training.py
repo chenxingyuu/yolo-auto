@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import shlex
 import time
 from dataclasses import dataclass
+from typing import Any
 
 from yolo_auto.errors import err, ok
 from yolo_auto.feishu import FeishuNotifier
@@ -18,10 +20,33 @@ class TrainRequest:
     data_config_path: str
     epochs: int
     img_size: int
-    batch: int
+    batch: int | float
     learning_rate: float
     work_dir: str
     jobs_dir: str
+    extra_args: dict[str, Any] | None = None
+
+
+def _format_yolo_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "True" if value else "False"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, (list, tuple)):
+        list_repr = "[" + ",".join(_format_yolo_value(item) for item in value) + "]"
+        return shlex.quote(list_repr)
+    return shlex.quote(str(value))
+
+
+def _build_extra_cli_args(extra_args: dict[str, Any] | None) -> str:
+    if not extra_args:
+        return ""
+    arg_parts: list[str] = []
+    for key, raw_value in extra_args.items():
+        if raw_value is None:
+            continue
+        arg_parts.append(f"{key}={_format_yolo_value(raw_value)}")
+    return " ".join(arg_parts)
 
 
 def start_training(
@@ -45,15 +70,17 @@ def start_training(
             "img_size": req.img_size,
             "batch": req.batch,
             "learning_rate": req.learning_rate,
+            **(req.extra_args or {}),
         },
     )
     job_dir = f"{req.jobs_dir}/{req.job_id}"
     log_path = f"{job_dir}/train.log"
+    extra_cli_args = _build_extra_cli_args(req.extra_args)
     train_cmd = (
         f"mkdir -p {job_dir} && cd {req.work_dir} && "
         f"yolo detect train model={req.model} data={req.data_config_path} "
         f"epochs={req.epochs} imgsz={req.img_size} batch={req.batch} lr0={req.learning_rate} "
-        f"project={req.jobs_dir} name={req.job_id} > {log_path} 2>&1"
+        f"project={req.jobs_dir} name={req.job_id} {extra_cli_args} > {log_path} 2>&1"
     )
     try:
         pid, _ = ssh_client.execute_background(train_cmd)
