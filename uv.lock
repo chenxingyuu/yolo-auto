@@ -2184,6 +2184,7 @@ dependencies = [
     { name = "mlflow" },
     { name = "paramiko" },
     { name = "pydantic" },
+    { name = "python-dotenv" },
 ]
 
 [package.metadata]
@@ -2193,6 +2194,7 @@ requires-dist = [
     { name = "mlflow", specifier = ">=2.22.0" },
     { name = "paramiko", specifier = ">=3.5.1" },
     { name = "pydantic", specifier = ">=2.11.2" },
+    { name = "python-dotenv", specifier = ">=1.1.0" },
 ]
 
 [[package]]

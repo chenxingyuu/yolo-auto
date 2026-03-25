@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from dotenv import find_dotenv, load_dotenv
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -27,6 +29,11 @@ def _get_env(name: str, default: str | None = None) -> str:
 
 
 def load_settings() -> Settings:
+    # 自动加载项目根目录 .env；已存在的系统环境变量保持优先级
+    dotenv_path = find_dotenv(filename=".env", usecwd=True)
+    if dotenv_path:
+        load_dotenv(dotenv_path=dotenv_path, override=False)
+
     return Settings(
         yolo_ssh_host=_get_env("YOLO_SSH_HOST"),
         yolo_ssh_port=int(_get_env("YOLO_SSH_PORT", "2222")),
