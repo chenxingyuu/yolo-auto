@@ -51,3 +51,22 @@ class MLflowTracker:
             output_format="list",
         )
 
+    def summarize_top_runs(self, metric_key: str, limit: int = 5) -> list[dict[str, Any]]:
+        try:
+            runs = self.compare_runs(metric_key, descending=True)
+        except Exception:
+            return []
+        result: list[dict[str, Any]] = []
+        for run in runs[:limit]:
+            metrics = run.data.metrics or {}
+            metric_val = float(metrics.get(metric_key, 0.0))
+            result.append(
+                {
+                    "runId": run.info.run_id,
+                    "runName": run.info.run_name,
+                    "metricKey": metric_key,
+                    "metric": metric_val,
+                }
+            )
+        return result
+

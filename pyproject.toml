@@ -15,6 +15,7 @@ dependencies = [
 
 [project.scripts]
 yolo-auto-mcp = "yolo_auto.server:main"
+yolo-auto-watch = "yolo_auto.worker:main"
 
 [tool.uv]
 package = true

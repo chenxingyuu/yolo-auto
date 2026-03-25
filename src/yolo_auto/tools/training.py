@@ -81,9 +81,14 @@ def start_training(
         updated_at=now,
         last_notified_state=existing.last_notified_state if existing else None,
         last_metrics_at=existing.last_metrics_at if existing else None,
+        train_epochs=req.epochs,
+        last_reported_epoch=0,
     )
     state_store.upsert(record)
-    notifier.send_text(f"[YOLO] 训练已启动 job={req.job_id}, pid={pid}, run_id={run_id}")
+    notifier.send_training_update(
+        "[YOLO] 训练已启动",
+        f"job={req.job_id}\npid={pid}\nrunId={run_id}\nepochs={req.epochs}",
+    )
     return ok(record.to_dict())
 
 
@@ -124,9 +129,15 @@ def stop_training(
     if record:
         updated = state_store.update_status(job_id, JobStatus.STOPPED, now)
         if updated.last_notified_state != JobStatus.STOPPED:
-            notifier.send_text(f"[YOLO] 训练已停止 job={job_id}, run_id={effective_run_id}")
+            notifier.send_training_update(
+                "[YOLO] 训练已停止",
+                f"job={job_id}\nrunId={effective_run_id}",
+            )
             state_store.mark_notified(job_id, JobStatus.STOPPED, now)
         return ok(updated.to_dict())
-    notifier.send_text(f"[YOLO] 训练已停止 job={job_id}, run_id={effective_run_id}")
+    notifier.send_training_update(
+        "[YOLO] 训练已停止",
+        f"job={job_id}\nrunId={effective_run_id}",
+    )
     return ok({"jobId": job_id, "runId": effective_run_id, "status": JobStatus.STOPPED.value})
 

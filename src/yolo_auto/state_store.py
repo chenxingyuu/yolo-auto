@@ -41,6 +41,8 @@ class JobStateStore:
             updated_at=now_ts,
             last_notified_state=record.last_notified_state,
             last_metrics_at=record.last_metrics_at,
+            train_epochs=record.train_epochs,
+            last_reported_epoch=record.last_reported_epoch,
         )
         self.upsert(updated)
         return updated
@@ -59,6 +61,8 @@ class JobStateStore:
             updated_at=now_ts,
             last_notified_state=notified_state,
             last_metrics_at=record.last_metrics_at,
+            train_epochs=record.train_epochs,
+            last_reported_epoch=record.last_reported_epoch,
         )
         self.upsert(updated)
         return updated
@@ -77,9 +81,37 @@ class JobStateStore:
             updated_at=now_ts,
             last_notified_state=record.last_notified_state,
             last_metrics_at=now_ts,
+            train_epochs=record.train_epochs,
+            last_reported_epoch=record.last_reported_epoch,
         )
         self.upsert(updated)
         return updated
+
+    def mark_milestone_epoch(self, job_id: str, epoch: int, now_ts: int) -> JobRecord:
+        record = self.get(job_id)
+        if not record:
+            raise ValueError(f"job not found: {job_id}")
+        updated = JobRecord(
+            job_id=record.job_id,
+            run_id=record.run_id,
+            status=record.status,
+            pid=record.pid,
+            paths=record.paths,
+            created_at=record.created_at,
+            updated_at=now_ts,
+            last_notified_state=record.last_notified_state,
+            last_metrics_at=record.last_metrics_at,
+            train_epochs=record.train_epochs,
+            last_reported_epoch=epoch,
+        )
+        self.upsert(updated)
+        return updated
+
+    def list_all(self) -> list[JobRecord]:
+        raw = self._read_raw()
+        records = [JobRecord.from_dict(data) for data in raw.values()]
+        records.sort(key=lambda r: r.updated_at, reverse=True)
+        return records
 
     def _read_raw(self) -> dict[str, dict]:
         if not self._state_file.exists():

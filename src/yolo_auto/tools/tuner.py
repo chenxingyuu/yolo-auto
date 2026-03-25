@@ -28,6 +28,9 @@ class TuneRequest:
     jobs_dir: str
     trial_timeout_seconds: int = 1800
     poll_interval_seconds: int = 10
+    primary_metric_key: str = "map5095"
+    feishu_report_enable: bool = True
+    feishu_report_every_n_epochs: int = 5
 
 
 def auto_tune(
@@ -75,7 +78,17 @@ def auto_tune(
         deadline = int(time.time()) + req.trial_timeout_seconds
         latest_status: dict[str, Any] = {}
         while int(time.time()) <= deadline:
-            latest_status = get_status(job_id, run_id, state_store, ssh_client, tracker, notifier)
+            latest_status = get_status(
+                job_id,
+                run_id,
+                state_store,
+                ssh_client,
+                tracker,
+                notifier,
+                feishu_report_enable=req.feishu_report_enable,
+                feishu_report_every_n_epochs=req.feishu_report_every_n_epochs,
+                primary_metric_key=req.primary_metric_key,
+            )
             if not latest_status.get("ok", False):
                 break
             status_value = str(latest_status.get("status", JobStatus.RUNNING.value))
@@ -87,7 +100,15 @@ def auto_tune(
                 break
             time.sleep(req.poll_interval_seconds)
 
-        metric_value = float(latest_status.get("metrics", {}).get("map5095", 0.0))
+        metrics_payload = latest_status.get("metrics", {})
+        if isinstance(metrics_payload, dict):
+            raw_metric = metrics_payload.get(
+                req.primary_metric_key,
+                metrics_payload.get("primaryMetric", 0.0),
+            )
+            metric_value = float(raw_metric)
+        else:
+            metric_value = 0.0
         trial_status = str(latest_status.get("status", JobStatus.FAILED.value))
         if int(time.time()) > deadline and trial_status == JobStatus.RUNNING.value:
             trial_status = JobStatus.FAILED.value
@@ -109,12 +130,10 @@ def auto_tune(
                 "error": latest_status.get("error") if not latest_status.get("ok", True) else None,
             }
         )
-        progress_message = (
-            f"[YOLO][TUNE] trial={trial_index}/{req.max_trials}, "
-            f"job={job_id}, map50-95={metric_value:.4f}"
-        )
-        notifier.send_text(
-            progress_message
+        notifier.send_training_update(
+            "[YOLO] 调参 trial 完成",
+            f"trial={trial_index}/{req.max_trials}\njob={job_id}\n"
+            f"{req.primary_metric_key}={metric_value:.4f}",
         )
 
     succeeded_trials = [item for item in trials if item["status"] == JobStatus.COMPLETED.value]
@@ -127,13 +146,26 @@ def auto_tune(
             payload={"envId": req.env_id, "baseJobId": req.base_job_id, "trials": trials},
         )
     best_trial = max(succeeded_trials, key=lambda item: item["metric"])
+    mlflow_top = tracker.summarize_top_runs(req.primary_metric_key, limit=5)
+    best_mlflow = mlflow_top[0] if mlflow_top else None
+    disagreement = False
+    if best_mlflow is not None:
+        disagreement = abs(float(best_mlflow["metric"]) - float(best_trial["metric"])) > 1e-4
     return ok(
         {
             "envId": req.env_id,
             "baseJobId": req.base_job_id,
             "bestJobId": best_trial["jobId"],
-            "bestMetrics": {"map5095": best_trial["metric"]},
+            "bestMetrics": {req.primary_metric_key: best_trial["metric"]},
             "bestParams": best_trial["params"],
+            "bestFromTrials": {
+                "jobId": best_trial["jobId"],
+                "metricKey": req.primary_metric_key,
+                "metric": best_trial["metric"],
+            },
+            "bestFromMlflow": best_mlflow,
+            "mlflowTopRuns": mlflow_top,
+            "disagreement": disagreement,
             "trials": trials,
         }
     )

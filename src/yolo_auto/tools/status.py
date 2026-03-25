@@ -9,6 +9,7 @@ from yolo_auto.feishu import FeishuNotifier
 from yolo_auto.models import JobStatus
 from yolo_auto.ssh_client import SSHClient
 from yolo_auto.state_store import JobStateStore
+from yolo_auto.tools.metrics_csv import metric_value_from_parsed, parse_training_row
 from yolo_auto.tracker import MLflowTracker
 
 
@@ -19,6 +20,10 @@ def get_status(
     ssh_client: SSHClient,
     tracker: MLflowTracker,
     notifier: FeishuNotifier,
+    *,
+    feishu_report_enable: bool = True,
+    feishu_report_every_n_epochs: int = 5,
+    primary_metric_key: str = "map5095",
 ) -> dict[str, object]:
     now = int(time.time())
     record = state_store.get(job_id)
@@ -27,7 +32,7 @@ def get_status(
             error_code="JOB_NOT_FOUND",
             message=f"job not found: {job_id}",
             retryable=False,
-            hint="请先调用 yolo.start_training 创建任务",
+            hint="请先调用 yolo_start_training 创建任务",
             payload={"jobId": job_id},
         )
 
@@ -51,7 +56,9 @@ def get_status(
         target = JobStatus.FAILED if failed else JobStatus.COMPLETED
         updated = state_store.update_status(job_id, target, now)
         if updated.last_notified_state != target:
-            notifier.send_text(f"[YOLO] 任务 {job_id} 状态变更: {target.value}")
+            title = "[YOLO] 状态变更"
+            body = f"job={job_id}\n状态={target.value}\nrunId={effective_run_id}"
+            notifier.send_training_update(title, body)
             state_store.mark_notified(job_id, target, now)
         if target == JobStatus.FAILED:
             return err(
@@ -69,19 +76,21 @@ def get_status(
         return ok(
             {
                 "jobId": job_id,
-                "runId": run_id,
+                "runId": effective_run_id,
                 "status": record.status.value,
                 "progress": 0.0,
             }
         )
 
     last_row = rows[-1]
-    epoch = int(float(last_row.get("epoch", "0")))
-    map50 = float(last_row.get("metrics/mAP50(B)", "0"))
-    map5095 = float(last_row.get("metrics/mAP50-95(B)", "0"))
-    precision = float(last_row.get("metrics/precision(B)", "0"))
-    recall = float(last_row.get("metrics/recall(B)", "0"))
-    loss = float(last_row.get("train/box_loss", "0"))
+    parsed = parse_training_row(last_row)
+    epoch = int(parsed["epoch"])
+    map50 = float(parsed["map50"])
+    map5095 = float(parsed["map5095"])
+    precision = float(parsed["precision"])
+    recall = float(parsed["recall"])
+    loss = float(parsed["loss"])
+    primary_value = metric_value_from_parsed(parsed, primary_metric_key)
 
     tracker.log_epoch(
         run_id=effective_run_id,
@@ -94,13 +103,34 @@ def get_status(
         },
         step=epoch,
     )
-    state_store.mark_metrics(job_id, now)
+    record = state_store.mark_metrics(job_id, now)
+    total_epochs = max(record.train_epochs or 100, 1)
+    progress = round(min(1.0, epoch / total_epochs), 4)
+
+    if ssh_client.process_alive(record.pid) and feishu_report_enable:
+        n = feishu_report_every_n_epochs
+        if n > 0 and epoch > 0 and epoch >= record.last_reported_epoch + n:
+            title = "[YOLO] 训练里程碑"
+            body = (
+                f"job={job_id}\n"
+                f"epoch={epoch}/{total_epochs}\n"
+                f"{primary_metric_key}={primary_value:.4f}\n"
+                f"runId={effective_run_id}"
+            )
+            notifier.send_training_update(title, body)
+            record = state_store.mark_milestone_epoch(job_id, epoch, now)
 
     if not ssh_client.process_alive(record.pid):
         updated = state_store.update_status(job_id, JobStatus.COMPLETED, now)
-        tracker.finish_run(updated.run_id, updated.paths.get("bestPath"))
+        tracker.finish_run(effective_run_id, updated.paths.get("bestPath"))
         if updated.last_notified_state != JobStatus.COMPLETED:
-            notifier.send_text(f"[YOLO] 任务完成 job={job_id}, mAP50-95={map5095:.4f}")
+            title = "[YOLO] 任务完成"
+            body = (
+                f"job={job_id}\n"
+                f"mAP50-95={map5095:.4f}\n"
+                f"runId={effective_run_id}"
+            )
+            notifier.send_training_update(title, body)
             state_store.mark_notified(job_id, JobStatus.COMPLETED, now)
         status_value = updated.status.value
     else:
@@ -111,7 +141,7 @@ def get_status(
             "jobId": job_id,
             "runId": effective_run_id,
             "status": status_value,
-            "progress": round(min(1.0, epoch / 100), 4),
+            "progress": progress,
             "metrics": {
                 "epoch": epoch,
                 "loss": loss,
@@ -119,6 +149,7 @@ def get_status(
                 "map5095": map5095,
                 "precision": precision,
                 "recall": recall,
+                "primaryMetric": primary_value,
             },
             "artifacts": {
                 "best": record.paths.get("bestPath", ""),
@@ -126,4 +157,3 @@ def get_status(
             },
         }
     )
-

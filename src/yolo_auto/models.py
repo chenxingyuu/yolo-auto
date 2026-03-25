@@ -39,6 +39,8 @@ class JobRecord:
     updated_at: int
     last_notified_state: JobStatus | None = None
     last_metrics_at: int | None = None
+    train_epochs: int | None = None
+    last_reported_epoch: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -53,11 +55,14 @@ class JobRecord:
                 self.last_notified_state.value if self.last_notified_state else None
             ),
             "lastMetricsAt": self.last_metrics_at,
+            "trainEpochs": self.train_epochs,
+            "lastReportedEpoch": self.last_reported_epoch,
         }
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> JobRecord:
         last_notified = data.get("lastNotifiedState")
+        train_epochs_raw = data.get("trainEpochs")
         return JobRecord(
             job_id=str(data["jobId"]),
             run_id=str(data["runId"]),
@@ -68,5 +73,7 @@ class JobRecord:
             updated_at=int(data["updatedAt"]),
             last_notified_state=JobStatus(last_notified) if last_notified else None,
             last_metrics_at=int(data["lastMetricsAt"]) if data.get("lastMetricsAt") else None,
+            train_epochs=int(train_epochs_raw) if train_epochs_raw is not None else None,
+            last_reported_epoch=int(data.get("lastReportedEpoch", 0)),
         )
 
