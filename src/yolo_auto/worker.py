@@ -75,11 +75,17 @@ def main() -> None:
             )
         )
     ssh_default = ssh_by_env["default"]
-    notifier = FeishuNotifier(settings.feishu_webhook_url)
+    notifier = FeishuNotifier(
+        webhook_url=settings.feishu_webhook_url,
+        app_id=settings.feishu_app_id,
+        app_secret=settings.feishu_app_secret,
+        chat_id=settings.feishu_chat_id,
+    )
     tracker = MLflowTracker(
         TrackerConfig(
             tracking_uri=settings.mlflow_tracking_uri,
             experiment_name=settings.mlflow_experiment_name,
+            external_url=settings.mlflow_external_url,
         )
     )
     store = JobStateStore(settings.yolo_state_file)
