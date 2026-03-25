@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import base64
 import csv
 import time
-from io import StringIO
+from io import BytesIO, StringIO
+from typing import Any
 
 from yolo_auto.errors import err, ok
 from yolo_auto.feishu import FeishuNotifier
@@ -11,6 +13,74 @@ from yolo_auto.ssh_client import SSHClient
 from yolo_auto.state_store import JobStateStore
 from yolo_auto.tools.metrics_csv import metric_value_from_parsed, parse_training_row
 from yolo_auto.tracker import MLflowTracker
+
+
+def _generate_loss_map_chart_png_b64(
+    rows: list[dict[str, Any]],
+    *,
+    primary_metric_key: str,
+) -> str | None:
+    # matplotlib 仅在训练完成时才需要，避免影响训练过程性能与依赖缺失导致整个链路失败。
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception:
+        return None
+
+    epochs: list[int] = []
+    losses: list[float] = []
+    maps: list[float] = []
+
+    for row in rows:
+        parsed = parse_training_row(row)
+        epoch = int(parsed["epoch"])
+        if epoch <= 0:
+            continue
+        epochs.append(epoch)
+        losses.append(float(parsed["loss"]))
+        maps.append(float(metric_value_from_parsed(parsed, primary_metric_key)))
+
+    if len(epochs) < 2:
+        return None
+
+    # 控制点数，避免 base64 过大。
+    max_points = 50
+    if len(epochs) > max_points:
+        step = max(1, len(epochs) // max_points)
+        epochs = epochs[::step]
+        losses = losses[::step]
+        maps = maps[::step]
+
+    fig, (ax_loss, ax_map) = plt.subplots(
+        2,
+        1,
+        figsize=(6, 5),
+        dpi=100,
+        sharex=True,
+    )
+    ax_loss.plot(epochs, losses, linewidth=1.5)
+    ax_loss.set_ylabel("loss")
+    ax_loss.grid(True, linewidth=0.3)
+
+    ax_map.plot(epochs, maps, linewidth=1.5)
+    ax_map.set_ylabel(primary_metric_key)
+    ax_map.set_xlabel("epoch")
+    ax_map.grid(True, linewidth=0.3)
+
+    fig.tight_layout()
+
+    buf = BytesIO()
+    try:
+        fig.savefig(buf, format="png", bbox_inches="tight", dpi=120)
+    finally:
+        plt.close(fig)
+
+    png_bytes = buf.getvalue()
+    if not png_bytes:
+        return None
+    return base64.b64encode(png_bytes).decode("ascii")
 
 
 def get_status(
@@ -127,10 +197,25 @@ def get_status(
             title = "[YOLO] 任务完成"
             body = (
                 f"job={job_id}\n"
+                f"loss={loss:.4f}\n"
                 f"mAP50-95={map5095:.4f}\n"
+                f"{primary_metric_key}={primary_value:.4f}\n"
                 f"runId={effective_run_id}"
             )
-            notifier.send_training_update(title, body)
+            chart_b64: str | None = None
+            if feishu_report_enable:
+                chart_b64 = _generate_loss_map_chart_png_b64(
+                    rows,
+                    primary_metric_key=primary_metric_key,
+                )
+
+            try:
+                if chart_b64:
+                    notifier.send_training_completed_with_chart(title, body, chart_b64)  # type: ignore[attr-defined]
+                else:
+                    notifier.send_training_update(title, body)
+            except Exception:
+                notifier.send_training_update(title, body)
             state_store.mark_notified(job_id, JobStatus.COMPLETED, now)
         status_value = updated.status.value
     else:

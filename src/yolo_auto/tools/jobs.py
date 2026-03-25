@@ -14,8 +14,22 @@ from yolo_auto.tools.status import get_status
 from yolo_auto.tracker import MLflowTracker
 
 
-def _epoch_hint(record: JobRecord, ssh_client: SSHClient) -> dict[str, Any]:
+def _ssh_for_record(
+    record: JobRecord,
+    ssh_clients_by_env: dict[str, SSHClient],
+    *,
+    default_env_id: str = "default",
+) -> SSHClient:
+    ssh = ssh_clients_by_env.get(record.env_id)
+    if ssh:
+        return ssh
+    # 回退到 default；保证旧数据或未知 envId 不会导致整个请求失败。
+    return ssh_clients_by_env[default_env_id]
+
+
+def _epoch_hint(record: JobRecord, ssh_clients_by_env: dict[str, SSHClient]) -> dict[str, Any]:
     path = record.paths.get("metricsPath", "")
+    ssh_client = _ssh_for_record(record, ssh_clients_by_env)
     content, _, code = ssh_client.execute(f"cat {path}")
     if code != 0 or not content.strip():
         return {}
@@ -28,14 +42,14 @@ def _epoch_hint(record: JobRecord, ssh_client: SSHClient) -> dict[str, Any]:
 
 def list_jobs(
     state_store: JobStateStore,
-    ssh_client: SSHClient,
+    ssh_clients_by_env: dict[str, SSHClient],
     limit: int = 20,
 ) -> dict[str, Any]:
     capped = max(1, min(limit, 100))
     records = state_store.list_all()[:capped]
     items: list[dict[str, Any]] = []
     for record in records:
-        hint = _epoch_hint(record, ssh_client)
+        hint = _epoch_hint(record, ssh_clients_by_env)
         merged = record.to_dict()
         merged["epochHint"] = hint.get("epoch")
         items.append(merged)
@@ -45,7 +59,7 @@ def list_jobs(
 def get_job(
     job_id: str,
     state_store: JobStateStore,
-    ssh_client: SSHClient,
+    ssh_clients_by_env: dict[str, SSHClient],
     tracker: MLflowTracker,
     notifier: FeishuNotifier,
     *,
@@ -65,6 +79,7 @@ def get_job(
         )
     payload: dict[str, Any] = {"record": record.to_dict()}
     if refresh:
+        ssh_client = _ssh_for_record(record, ssh_clients_by_env)
         status_payload = get_status(
             job_id,
             record.run_id,

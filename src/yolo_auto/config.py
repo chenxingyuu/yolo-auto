@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 
@@ -12,6 +13,7 @@ class Settings:
     yolo_ssh_port: int
     yolo_ssh_user: str
     yolo_ssh_key_path: str
+    yolo_ssh_envs: dict[str, SSHEnv]
     feishu_webhook_url: str
     feishu_report_enable: bool
     feishu_report_every_n_epochs: int
@@ -26,6 +28,14 @@ class Settings:
     yolo_state_file: str
     watch_poll_interval_seconds: int
     watch_lock_file: str
+
+
+@dataclass(frozen=True)
+class SSHEnv:
+    host: str
+    port: int
+    user: str
+    key_path: str
 
 
 def _env_truthy(value: str) -> bool:
@@ -45,11 +55,58 @@ def load_settings() -> Settings:
     if dotenv_path:
         load_dotenv(dotenv_path=dotenv_path, override=False)
 
+    raw_envs = os.getenv("YOLO_SSH_ENVS", "").strip()
+    if raw_envs:
+        parsed = json.loads(raw_envs)
+        if not isinstance(parsed, dict):
+            raise ValueError("YOLO_SSH_ENVS must be a JSON object")
+
+        envs: dict[str, SSHEnv] = {}
+        for env_id, cfg in parsed.items():
+            if not isinstance(cfg, dict):
+                raise ValueError(f"YOLO_SSH_ENVS[{env_id}] must be an object")
+            host = cfg.get("host")
+            user = cfg.get("user")
+            key_path = cfg.get("keyPath") or cfg.get("key_path")
+            port = cfg.get("port", 2222)
+            if not host or not user or not key_path:
+                raise ValueError(f"YOLO_SSH_ENVS[{env_id}] missing host/user/keyPath")
+            envs[str(env_id)] = SSHEnv(
+                host=str(host),
+                port=int(port),
+                user=str(user),
+                key_path=str(key_path),
+            )
+
+        if "default" not in envs:
+            # 如果用户没有提供 default，则尝试回退到旧版 YOLO_SSH_* 变量。
+            default_host = _get_env("YOLO_SSH_HOST")
+            default_port = int(_get_env("YOLO_SSH_PORT", "2222"))
+            default_user = _get_env("YOLO_SSH_USER")
+            default_key_path = _get_env("YOLO_SSH_KEY_PATH")
+            envs["default"] = SSHEnv(
+                host=default_host,
+                port=default_port,
+                user=default_user,
+                key_path=default_key_path,
+            )
+    else:
+        envs = {
+            "default": SSHEnv(
+                host=_get_env("YOLO_SSH_HOST"),
+                port=int(_get_env("YOLO_SSH_PORT", "2222")),
+                user=_get_env("YOLO_SSH_USER"),
+                key_path=_get_env("YOLO_SSH_KEY_PATH"),
+            )
+        }
+
+    default_env = envs["default"]
     return Settings(
-        yolo_ssh_host=_get_env("YOLO_SSH_HOST"),
-        yolo_ssh_port=int(_get_env("YOLO_SSH_PORT", "2222")),
-        yolo_ssh_user=_get_env("YOLO_SSH_USER"),
-        yolo_ssh_key_path=_get_env("YOLO_SSH_KEY_PATH"),
+        yolo_ssh_host=default_env.host,
+        yolo_ssh_port=default_env.port,
+        yolo_ssh_user=default_env.user,
+        yolo_ssh_key_path=default_env.key_path,
+        yolo_ssh_envs=envs,
         feishu_webhook_url=_get_env("FEISHU_WEBHOOK_URL"),
         feishu_report_enable=_env_truthy(_get_env("FEISHU_REPORT_ENABLE", "true")),
         feishu_report_every_n_epochs=max(

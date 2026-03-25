@@ -37,6 +37,7 @@ class JobRecord:
     paths: dict[str, str]
     created_at: int
     updated_at: int
+    env_id: str = "default"
     last_notified_state: JobStatus | None = None
     last_metrics_at: int | None = None
     train_epochs: int | None = None
@@ -49,6 +50,7 @@ class JobRecord:
             "status": self.status.value,
             "pid": self.pid,
             "paths": self.paths,
+            "envId": self.env_id,
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
             "lastNotifiedState": (
@@ -69,6 +71,7 @@ class JobRecord:
             status=JobStatus(str(data["status"])),
             pid=str(data.get("pid", "")),
             paths=dict(data.get("paths", {})),
+            env_id=str(data.get("envId", "default")),
             created_at=int(data["createdAt"]),
             updated_at=int(data["updatedAt"]),
             last_notified_state=JobStatus(last_notified) if last_notified else None,

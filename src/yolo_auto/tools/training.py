@@ -24,6 +24,7 @@ class TrainRequest:
     learning_rate: float
     work_dir: str
     jobs_dir: str
+    env_id: str = "default"
     extra_args: dict[str, Any] | None = None
 
 
@@ -80,7 +81,10 @@ def start_training(
         f"mkdir -p {job_dir} && cd {req.work_dir} && "
         f"yolo detect train model={req.model} data={req.data_config_path} "
         f"epochs={req.epochs} imgsz={req.img_size} batch={req.batch} lr0={req.learning_rate} "
-        f"project={req.jobs_dir} name={req.job_id} {extra_cli_args} > {log_path} 2>&1"
+        # Ultralytics 默认会在目标目录已存在时自动给 name 追加数字后缀（如 xxx2）。
+        # 我们这里会先 mkdir job_dir 以写入 train.log，因此显式设置 exist_ok=True，
+        # 避免保存目录与 MCP 记录的 jobDir 不一致导致 results.csv 读取失败。
+        f"project={req.jobs_dir} name={req.job_id} exist_ok=True {extra_cli_args} > {log_path} 2>&1"
     )
     try:
         pid, _ = ssh_client.execute_background(train_cmd)
@@ -106,6 +110,7 @@ def start_training(
         },
         created_at=now if not existing else existing.created_at,
         updated_at=now,
+        env_id=req.env_id,
         last_notified_state=existing.last_notified_state if existing else None,
         last_metrics_at=existing.last_metrics_at if existing else None,
         train_epochs=req.epochs,

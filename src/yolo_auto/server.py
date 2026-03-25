@@ -15,6 +15,7 @@ from yolo_auto.prompts import register_prompts
 from yolo_auto.resources import register_resources
 from yolo_auto.ssh_client import SSHClient, SSHConfig
 from yolo_auto.state_store import JobStateStore
+from yolo_auto.tools.export import run_export
 from yolo_auto.tools.jobs import get_job, list_jobs
 from yolo_auto.tools.setup_env import setup_env
 from yolo_auto.tools.status import get_status
@@ -25,14 +26,17 @@ from yolo_auto.tracker import MLflowTracker, TrackerConfig
 
 mcp = FastMCP("yolo-auto")
 SETTINGS = load_settings()
-SSH = SSHClient(
-    SSHConfig(
-        host=SETTINGS.yolo_ssh_host,
-        port=SETTINGS.yolo_ssh_port,
-        user=SETTINGS.yolo_ssh_user,
-        key_path=SETTINGS.yolo_ssh_key_path,
+SSH_BY_ENV: dict[str, SSHClient] = {}
+for env_id, ssh_env in SETTINGS.yolo_ssh_envs.items():
+    SSH_BY_ENV[env_id] = SSHClient(
+        SSHConfig(
+            host=ssh_env.host,
+            port=ssh_env.port,
+            user=ssh_env.user,
+            key_path=ssh_env.key_path,
+        )
     )
-)
+SSH = SSH_BY_ENV["default"]
 NOTIFIER = FeishuNotifier(SETTINGS.feishu_webhook_url, SETTINGS.feishu_message_mode)
 TRACKER = MLflowTracker(
     TrackerConfig(
@@ -241,6 +245,13 @@ def yolo_start_training(
             description="最长训练时间（小时），设置时会作用于 Ultralytics time=。",
         ),
     ] = None,
+    envId: Annotated[
+        str,
+        Field(
+            default="default",
+            description="训练运行环境 ID；用于选择对应 SSH（来自 YOLO_SSH_ENVS）。",
+        ),
+    ] = "default",
     jobId: Annotated[
         str | None,
         Field(
@@ -300,9 +311,11 @@ def yolo_start_training(
         learning_rate=learningRate,
         work_dir=SETTINGS.yolo_work_dir,
         jobs_dir=SETTINGS.yolo_jobs_dir,
+        env_id=envId,
         extra_args=merged_extras,
     )
-    return start_training(req, SSH, NOTIFIER, TRACKER, STATE_STORE)
+    ssh_client = SSH_BY_ENV.get(envId, SSH)
+    return start_training(req, ssh_client, NOTIFIER, TRACKER, STATE_STORE)
 
 
 @mcp.tool(name="yolo_get_status")
@@ -317,11 +330,13 @@ def yolo_get_status(
 
     训练进行中可反复调用；返回含 ok、status、metrics 等。需使用启动时返回的 jobId 与 runId。
     """
+    record = STATE_STORE.get(jobId)
+    ssh_client = SSH_BY_ENV.get(record.env_id, SSH) if record else SSH
     return get_status(
         jobId,
         runId,
         STATE_STORE,
-        SSH,
+        ssh_client,
         TRACKER,
         NOTIFIER,
         feishu_report_enable=SETTINGS.feishu_report_enable,
@@ -342,7 +357,9 @@ def yolo_stop_training(
 
     需提供 jobId 与 runId；成功返回更新后的任务状态或停止确认字段。
     """
-    return stop_training(jobId, runId, SSH, NOTIFIER, TRACKER, STATE_STORE)
+    record = STATE_STORE.get(jobId)
+    ssh_client = SSH_BY_ENV.get(record.env_id, SSH) if record else SSH
+    return stop_training(jobId, runId, ssh_client, NOTIFIER, TRACKER, STATE_STORE)
 
 
 @mcp.tool(name="yolo_validate")
@@ -372,15 +389,66 @@ def yolo_validate(
     ] = None,
 ) -> dict[str, Any]:
     """基于训练完成后的最佳权重在验证集上跑 yolo detect val。"""
+    record = STATE_STORE.get(jobId)
+    ssh_client = SSH_BY_ENV.get(record.env_id, SSH) if record else SSH
     return run_validation(
         jobId,
         STATE_STORE,
-        SSH,
+        ssh_client,
         SETTINGS.yolo_jobs_dir,
         SETTINGS.yolo_work_dir,
         data_config_path=dataConfigPath,
         img_size=imgSize,
         batch=batch,
+        device=device,
+        extra_args=extraArgs,
+    )
+
+
+@mcp.tool(name="yolo_export")
+def yolo_export(
+    jobId: Annotated[str, Field(description="要导出的训练任务 ID。")],
+    formats: Annotated[
+        list[str] | None,
+        Field(
+            default=None,
+            description="导出格式列表（如 ['onnx','engine','coreml']）。不传则使用默认三种。",
+        ),
+    ] = None,
+    imgSize: Annotated[
+        int | None,
+        Field(description="可选：export imgsz。"),
+    ] = None,
+    half: Annotated[
+        bool | None,
+        Field(description="可选：export half=True（支持的格式上生效）。"),
+    ] = None,
+    int8: Annotated[
+        bool | None,
+        Field(description="可选：export int8=True（支持的格式上生效）。"),
+    ] = None,
+    device: Annotated[
+        str | None,
+        Field(description="可选：export device=，如 0、cpu、mps。"),
+    ] = None,
+    extraArgs: Annotated[
+        dict[str, Any] | None,
+        Field(description="可选：透传 Ultralytics export CLI 参数（key=value）。"),
+    ] = None,
+) -> dict[str, Any]:
+    """对已完成训练的 best 权重做 yolo export，并返回 job_dir 下找到的导出产物列表。"""
+    record = STATE_STORE.get(jobId)
+    ssh_client = SSH_BY_ENV.get(record.env_id, SSH) if record else SSH
+    return run_export(
+        job_id=jobId,
+        state_store=STATE_STORE,
+        ssh_client=ssh_client,
+        jobs_dir=SETTINGS.yolo_jobs_dir,
+        work_dir=SETTINGS.yolo_work_dir,
+        formats=formats,
+        img_size=imgSize,
+        half=half,
+        int8=int8,
         device=device,
         extra_args=extraArgs,
     )
@@ -436,7 +504,8 @@ def yolo_auto_tune(
         feishu_report_enable=SETTINGS.feishu_report_enable,
         feishu_report_every_n_epochs=SETTINGS.feishu_report_every_n_epochs,
     )
-    return auto_tune(req, SSH, NOTIFIER, TRACKER, STATE_STORE)
+    ssh_client = SSH_BY_ENV.get(envId, SSH)
+    return auto_tune(req, ssh_client, NOTIFIER, TRACKER, STATE_STORE)
 
 
 @mcp.tool(name="yolo_list_jobs")
@@ -450,7 +519,7 @@ def yolo_list_jobs(
 
     用于在对话中快速查看有哪些 jobId 可继续 get_status 或 stop。
     """
-    return list_jobs(STATE_STORE, SSH, limit=limit)
+    return list_jobs(STATE_STORE, SSH_BY_ENV, limit=limit)
 
 
 @mcp.tool(name="yolo_get_job")
@@ -474,7 +543,7 @@ def yolo_get_job(
     return get_job(
         jobId,
         STATE_STORE,
-        SSH,
+        SSH_BY_ENV,
         TRACKER,
         NOTIFIER,
         refresh=refresh,
@@ -919,7 +988,7 @@ def report_prompt(period: str = "今天") -> str:
 
 mcp.resource = _real_mcp_resource
 mcp.prompt = _real_mcp_prompt
-register_resources(mcp, SETTINGS, SSH, STATE_STORE, TRACKER)
+register_resources(mcp, SETTINGS, SSH_BY_ENV, STATE_STORE, TRACKER)
 register_prompts(mcp)
 
 

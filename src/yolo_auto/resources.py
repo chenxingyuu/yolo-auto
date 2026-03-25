@@ -15,11 +15,16 @@ from yolo_auto.tracker import MLflowTracker
 def register_resources(
     mcp: FastMCP,
     settings: Settings,
-    ssh_client: SSHClient,
+    ssh_clients_by_env: dict[str, SSHClient],
     state_store: JobStateStore,
     tracker: MLflowTracker,
 ) -> None:
     """Register MCP Resources for read-only background context."""
+
+    ssh_client_default = ssh_clients_by_env.get("default")
+    if ssh_client_default is None:
+        # 兜底：至少保证资源可以工作（避免 KeyError）。
+        ssh_client_default = next(iter(ssh_clients_by_env.values()))
 
     @mcp.resource(
         "yolo://config",
@@ -116,7 +121,7 @@ def register_resources(
     )
     def resource_datasets() -> str:
         try:
-            stdout, _, code = ssh_client.execute(
+            stdout, _, code = ssh_client_default.execute(
                 f"find {settings.yolo_datasets_dir} -maxdepth 3 -name '*.yaml' -o -name '*.yml'"
                 " 2>/dev/null | head -50 | sort",
                 timeout=10,
@@ -149,7 +154,7 @@ def register_resources(
                 f"find {settings.yolo_models_dir} -maxdepth 2 -name '*.pt' "
                 "-exec ls -lh {{}} \\; 2>/dev/null | awk '{print $5, $NF}' | sort"
             )
-            stdout, _, code = ssh_client.execute(cmd, timeout=10)
+            stdout, _, code = ssh_client_default.execute(cmd, timeout=10)
             if code != 0:
                 models: list[dict[str, str]] = []
             else:
@@ -178,7 +183,7 @@ def register_resources(
     )
     def resource_gpu_info() -> str:
         try:
-            stdout, _, code = ssh_client.execute(
+            stdout, _, code = ssh_client_default.execute(
                 "nvidia-smi --query-gpu=index,name,memory.total,memory.used,"
                 "memory.free,utilization.gpu,utilization.memory,temperature.gpu"
                 " --format=csv,noheader,nounits",
@@ -218,7 +223,7 @@ def register_resources(
     def resource_system_info() -> str:
         info: dict[str, Any] = {}
         try:
-            cpu_out, _, _ = ssh_client.execute(
+            cpu_out, _, _ = ssh_client_default.execute(
                 "nproc && lscpu | grep 'Model name' | sed 's/.*: *//'",
                 timeout=10,
             )
@@ -228,7 +233,7 @@ def register_resources(
                 "model": cpu_lines[1].strip() if len(cpu_lines) > 1 else "",
             }
 
-            mem_out, _, _ = ssh_client.execute(
+            mem_out, _, _ = ssh_client_default.execute(
                 "free -m | awk '/^Mem:/{print $2,$3,$4}'",
                 timeout=10,
             )
@@ -240,7 +245,7 @@ def register_resources(
                     "free": int(mem_parts[2]),
                 }
 
-            disk_out, _, _ = ssh_client.execute(
+            disk_out, _, _ = ssh_client_default.execute(
                 "df -BG /workspace 2>/dev/null | awk 'NR==2{print $2,$3,$4,$5}'",
                 timeout=10,
             )
@@ -255,6 +260,30 @@ def register_resources(
         except Exception:
             pass
         return json.dumps(info, ensure_ascii=False, indent=2)
+
+    @mcp.resource(
+        "yolo://jobs/{jobId}/log",
+        name="job-log",
+        description="读取远程训练进程的 train.log 尾部内容（按 job.envId 选择对应 SSH）。",
+        mime_type="text/plain",
+    )
+    def resource_job_log(jobId: str) -> str:
+        record = state_store.get(jobId)
+        if not record:
+            return f"job not found: {jobId}"
+
+        log_path = record.paths.get("logPath", "")
+        if not log_path:
+            return f"missing logPath for job: {jobId}"
+
+        ssh_client = ssh_clients_by_env.get(record.env_id, ssh_client_default)
+        if not ssh_client:
+            return f"missing SSH client for envId={record.env_id}"
+
+        tail, _, code = ssh_client.tail_file(log_path, lines=200)
+        if code != 0:
+            return f"failed to tail logPath={log_path}\n\n{tail}"
+        return tail
 
     @mcp.resource(
         "yolo://guide/training-params",

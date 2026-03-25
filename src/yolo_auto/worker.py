@@ -37,14 +37,17 @@ class LockFile:
 
 def main() -> None:
     settings = load_settings()
-    ssh = SSHClient(
-        SSHConfig(
-            host=settings.yolo_ssh_host,
-            port=settings.yolo_ssh_port,
-            user=settings.yolo_ssh_user,
-            key_path=settings.yolo_ssh_key_path,
+    ssh_by_env: dict[str, SSHClient] = {}
+    for env_id, ssh_env in settings.yolo_ssh_envs.items():
+        ssh_by_env[env_id] = SSHClient(
+            SSHConfig(
+                host=ssh_env.host,
+                port=ssh_env.port,
+                user=ssh_env.user,
+                key_path=ssh_env.key_path,
+            )
         )
-    )
+    ssh_default = ssh_by_env["default"]
     notifier = FeishuNotifier(settings.feishu_webhook_url, settings.feishu_message_mode)
     tracker = MLflowTracker(
         TrackerConfig(
@@ -59,11 +62,12 @@ def main() -> None:
             for job in store.list_all():
                 if job.status != JobStatus.RUNNING:
                     continue
+                ssh_client = ssh_by_env.get(job.env_id, ssh_default)
                 get_status(
                     job.job_id,
                     job.run_id,
                     store,
-                    ssh,
+                    ssh_client,
                     tracker,
                     notifier,
                     feishu_report_enable=settings.feishu_report_enable,

@@ -60,6 +60,7 @@ def auto_tune(
             learning_rate=float(lr),
             work_dir=req.work_dir,
             jobs_dir=req.jobs_dir,
+            env_id=req.env_id,
         )
         train_result = start_training(train_req, ssh_client, notifier, tracker, state_store)
         if not train_result.get("ok", False):

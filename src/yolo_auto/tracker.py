@@ -28,11 +28,30 @@ class MLflowTracker:
         return run.info.run_id
 
     def log_epoch(self, run_id: str, metrics: dict[str, float], step: int) -> None:
-        with mlflow.start_run(run_id=run_id, nested=False):
+        # 训练启动后 `start_run()` 不会自动 end_run，因此此时
+        # `mlflow.active_run()` 可能已经等于当前 run_id。
+        # 此时再次以 nested=False 开始同一个 run 会抛异常：
+        # "Run with UUID is already active".
+        active = mlflow.active_run()
+        if active is not None and active.info.run_id == run_id:
+            mlflow.log_metrics(metrics, step=step)
+            return
+
+        # 若当前没有对应 run 处于 active，显式打开并记录指标。
+        with mlflow.start_run(run_id=run_id, nested=True):
             mlflow.log_metrics(metrics, step=step)
 
     def finish_run(self, run_id: str, best_model_path: str | None = None) -> None:
-        with mlflow.start_run(run_id=run_id):
+        active = mlflow.active_run()
+        if active is not None and active.info.run_id == run_id:
+            if best_model_path:
+                model_path = Path(best_model_path)
+                if model_path.exists():
+                    mlflow.log_artifact(best_model_path)
+            mlflow.end_run(status="FINISHED")
+            return
+
+        with mlflow.start_run(run_id=run_id, nested=True):
             if best_model_path:
                 model_path = Path(best_model_path)
                 if model_path.exists():
@@ -40,7 +59,12 @@ class MLflowTracker:
             mlflow.end_run(status="FINISHED")
 
     def kill_run(self, run_id: str) -> None:
-        with mlflow.start_run(run_id=run_id):
+        active = mlflow.active_run()
+        if active is not None and active.info.run_id == run_id:
+            mlflow.end_run(status="KILLED")
+            return
+
+        with mlflow.start_run(run_id=run_id, nested=True):
             mlflow.end_run(status="KILLED")
 
     def compare_runs(self, metric_key: str, descending: bool = True) -> list[Run]:
