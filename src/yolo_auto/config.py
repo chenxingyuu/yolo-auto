@@ -58,7 +58,7 @@ def load_settings() -> Settings:
         primary_metric_key=_get_env("YOLO_PRIMARY_METRIC", "map5095"),
         mlflow_tracking_uri=_get_env("MLFLOW_TRACKING_URI", "./mlruns"),
         mlflow_experiment_name=_get_env("MLFLOW_EXPERIMENT_NAME", "yolo-auto"),
-        yolo_work_dir=_get_env("YOLO_WORK_DIR", "/workspace/yolo-openclaw"),
+        yolo_work_dir=_get_env("YOLO_WORK_DIR", "/workspace/yolo-auto"),
         yolo_datasets_dir=_get_env("YOLO_DATASETS_DIR", "/workspace/datasets"),
         yolo_jobs_dir=_get_env("YOLO_JOBS_DIR", "/workspace/jobs"),
         yolo_state_file=_get_env("YOLO_STATE_FILE", ".state/jobs.json"),

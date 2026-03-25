@@ -1,0 +1,21 @@
+services:
+  yolo-auto:
+    image: registry.cn-hangzhou.aliyuncs.com/daxx/yolo-auto:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: yolo-auto
+    restart: unless-stopped
+    ports:
+      - "2222:2222"
+    gpus: all
+    volumes:
+      - datasets:/workspace/datasets
+      - jobs:/workspace/jobs
+      - /root/.ssh/authorized_keys:/root/.ssh/authorized_keys:ro
+
+volumes:
+  jobs:
+    driver: local
+  datasets:
+    driver: local
