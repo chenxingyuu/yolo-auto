@@ -7,6 +7,7 @@ from typing import Annotated, Any
 from uuid import uuid4
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import Field
 from starlette.responses import PlainTextResponse
 
@@ -1046,6 +1047,14 @@ def main() -> None:
         mcp.settings.host = host
     if port_raw:
         mcp.settings.port = int(port_raw)
+
+    # FastMCP 会在初始化时根据 host 自动启用 DNS rebinding protection（默认只允许 127.0.0.1）。
+    # 我们在运行期可能把 host 从 127.0.0.1 改成 0.0.0.0，因此这里同步关闭或放宽校验，
+    # 避免 Cursor 在容器/反代场景下因 Host header 不在 allowlist 而收到 421。
+    if host and host not in ("127.0.0.1", "localhost", "::1"):
+        mcp.settings.transport_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=False
+        )
 
     # Configure Streamable HTTP endpoint path.
     streamable_path = os.getenv("MCP_PATH", "").strip()
