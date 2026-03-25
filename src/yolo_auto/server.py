@@ -601,6 +601,92 @@ def resource_models() -> str:
 
 
 @mcp.resource(
+    "yolo://env/gpu",
+    name="gpu-info",
+    description="远程服务器 GPU 型号、显存、使用率、温度等（nvidia-smi）。",
+    mime_type="application/json",
+)
+def resource_gpu_info() -> str:
+    try:
+        stdout, _, code = SSH.execute(
+            "nvidia-smi --query-gpu=index,name,memory.total,memory.used,"
+            "memory.free,utilization.gpu,utilization.memory,temperature.gpu"
+            " --format=csv,noheader,nounits",
+            timeout=10,
+        )
+        gpus: list[dict[str, str | int | float]] = []
+        if code == 0:
+            for line in stdout.strip().splitlines():
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) >= 8:
+                    gpus.append({
+                        "index": int(parts[0]),
+                        "name": parts[1],
+                        "memoryTotalMB": int(parts[2]),
+                        "memoryUsedMB": int(parts[3]),
+                        "memoryFreeMB": int(parts[4]),
+                        "gpuUtil%": int(parts[5]),
+                        "memUtil%": int(parts[6]),
+                        "tempC": int(parts[7]),
+                    })
+    except Exception:
+        gpus = []
+    return json.dumps(
+        {"gpus": gpus, "count": len(gpus)},
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+@mcp.resource(
+    "yolo://env/system",
+    name="system-info",
+    description="远程服务器 CPU、内存、磁盘概况。",
+    mime_type="application/json",
+)
+def resource_system_info() -> str:
+    info: dict[str, Any] = {}
+    try:
+        cpu_out, _, _ = SSH.execute(
+            "nproc && lscpu | grep 'Model name' | sed 's/.*: *//'",
+            timeout=10,
+        )
+        cpu_lines = cpu_out.strip().splitlines()
+        info["cpu"] = {
+            "cores": int(cpu_lines[0]) if cpu_lines else 0,
+            "model": cpu_lines[1].strip() if len(cpu_lines) > 1 else "",
+        }
+
+        mem_out, _, _ = SSH.execute(
+            "free -m | awk '/^Mem:/{print $2,$3,$4}'",
+            timeout=10,
+        )
+        mem_parts = mem_out.strip().split()
+        if len(mem_parts) >= 3:
+            info["memoryMB"] = {
+                "total": int(mem_parts[0]),
+                "used": int(mem_parts[1]),
+                "free": int(mem_parts[2]),
+            }
+
+        disk_out, _, _ = SSH.execute(
+            "df -BG /workspace 2>/dev/null | awk 'NR==2{print $2,$3,$4,$5}'",
+            timeout=10,
+        )
+        disk_parts = disk_out.strip().split()
+        if len(disk_parts) >= 4:
+            info["diskWorkspace"] = {
+                "totalGB": disk_parts[0].rstrip("G"),
+                "usedGB": disk_parts[1].rstrip("G"),
+                "availGB": disk_parts[2].rstrip("G"),
+                "usePercent": disk_parts[3],
+            }
+    except Exception:
+        pass
+    return json.dumps(info, ensure_ascii=False, indent=2)
+
+
+@mcp.resource(
     "yolo://guide/training-params",
     name="training-params-guide",
     description="Ultralytics YOLO 训练参数速查与推荐值范围，帮助模型给出合理的参数建议。",
