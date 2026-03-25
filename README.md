@@ -205,6 +205,66 @@ uv run mlflow ui --backend-store-uri ./mlruns --port 5001
 
 浏览器打开 `http://127.0.0.1:5001`，查看参数、指标与 run 状态。`yolo_auto_tune` 返回的 `mlflowTopRuns` 与 `bestFromTrials` 可对照排查不一致。
 
+## 7.1 Docker 部署（HTTP MCP + worker + sqlite MLflow）
+
+本节用于把本项目以 **两个容器** 方式部署：
+
+- **mcp 容器**：对外提供 MCP HTTP Endpoint（Streamable HTTP），供 Cursor/Claude 通过 URL 连接
+- **worker 容器**：后台轮询任务状态并更新 MLflow/飞书
+- （可选）**mlflow-ui 容器**：提供 Web UI 便于查看 run
+
+> 训练/GPU 侧不在本 compose 内；mcp/worker 通过 SSH 连接你已有的远程 GPU 机器/容器。
+
+### 7.1.1 准备 SSH 私钥（推荐用 secrets）
+
+将用于 SSH 的私钥放到：
+
+`docker/secrets/yolo_ssh_key`
+
+并确保权限安全（只读、不可被提交到 git）。
+
+### 7.1.2 启动 compose
+
+在项目根目录执行：
+
+```bash
+docker compose -f docker/docker-compose.app.yaml up -d --build
+```
+
+服务端口：
+
+- MCP HTTP：`http://127.0.0.1:8000/mcp/`
+- healthcheck：`http://127.0.0.1:8000/health`
+- MLflow UI（可选）：`http://127.0.0.1:5001`
+
+### 7.1.3 环境变量（关键项）
+
+compose 内默认把 MLflow backend store 切到 sqlite：
+
+- `MLFLOW_TRACKING_URI=sqlite:////data/mlflow/mlflow.db`
+- `MLFLOW_EXPERIMENT_NAME=yolo-auto`
+
+任务状态共享文件（mcp 与 worker 必须一致）：
+
+- `YOLO_STATE_FILE=/data/state/jobs.json`
+- `YOLO_WATCH_LOCK_FILE=/data/state/watch.lock`
+
+SSH（建议用 `YOLO_SSH_ENVS`，或回退 `YOLO_SSH_HOST/PORT/USER`）：
+
+- `YOLO_SSH_KEY_PATH=/run/secrets/yolo_ssh_key`
+
+飞书：
+
+- `FEISHU_WEBHOOK_URL=...`
+
+### 7.1.4 在 Cursor 配置 HTTP MCP（示例）
+
+你需要把 MCP server 配置为 URL 连接（具体 UI 入口依 Cursor 版本而定），并填：
+
+- MCP URL：`http://127.0.0.1:8000/mcp/`
+
+如需公网部署，建议在反向代理/网关层加鉴权，并限制来源 IP。
+
 ## 8. 常见问题
 
 - **`.env` 不生效**：确认文件在**项目根目录**且变量名与 `.env.example` 一致；或先 `export` 再启动进程。

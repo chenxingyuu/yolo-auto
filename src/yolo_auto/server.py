@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from typing import Annotated, Any
 from uuid import uuid4
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
+from starlette.responses import PlainTextResponse
 
 from yolo_auto.config import load_settings
 from yolo_auto.feishu import FeishuNotifier
@@ -1021,9 +1023,36 @@ mcp.prompt = _real_mcp_prompt
 register_resources(mcp, SETTINGS, SSH_BY_ENV, STATE_STORE, TRACKER)
 register_prompts(mcp)
 
+@mcp.custom_route("/health", methods=["GET"])
+async def health_check(_request: Any) -> PlainTextResponse:
+    return PlainTextResponse("OK")
+
 
 def main() -> None:
-    mcp.run(transport="stdio")
+    raw_transport = os.getenv("MCP_TRANSPORT", "streamable-http").strip().lower()
+    if raw_transport in ("http", "streamable_http", "streamable-http"):
+        transport = "streamable-http"
+    elif raw_transport in ("sse", "stdio"):
+        transport = raw_transport
+    else:
+        raise ValueError(f"Unsupported MCP_TRANSPORT: {raw_transport}")
+
+    mount_path = os.getenv("MCP_MOUNT_PATH", "").strip() or None
+
+    # Configure HTTP bind address/port via FastMCP settings (mcp SDK).
+    host = os.getenv("MCP_HOST", "").strip()
+    port_raw = os.getenv("MCP_PORT", "").strip()
+    if host:
+        mcp.settings.host = host
+    if port_raw:
+        mcp.settings.port = int(port_raw)
+
+    # Configure Streamable HTTP endpoint path.
+    streamable_path = os.getenv("MCP_PATH", "").strip()
+    if streamable_path:
+        mcp.settings.streamable_http_path = streamable_path
+
+    mcp.run(transport=transport, mount_path=mount_path)
 
 
 if __name__ == "__main__":
