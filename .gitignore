@@ -10,3 +10,7 @@ wheels/
 .venv
 mlruns/
 .ruff_cache/
+
+# Secrets / runtime state
+.env
+.state/

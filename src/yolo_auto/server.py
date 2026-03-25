@@ -11,6 +11,8 @@ from pydantic import Field
 from yolo_auto.config import load_settings
 from yolo_auto.feishu import FeishuNotifier
 from yolo_auto.models import JobStatus
+from yolo_auto.prompts import register_prompts
+from yolo_auto.resources import register_resources
 from yolo_auto.ssh_client import SSHClient, SSHConfig
 from yolo_auto.state_store import JobStateStore
 from yolo_auto.tools.jobs import get_job, list_jobs
@@ -440,6 +442,13 @@ def yolo_get_job(
     )
 
 
+# Disable legacy inline registrations (moved to `resources.py` / `prompts.py`).
+_real_mcp_resource = mcp.resource
+_real_mcp_prompt = mcp.prompt
+mcp.resource = lambda *args, **kwargs: (lambda fn: fn)
+mcp.prompt = lambda *args, **kwargs: (lambda fn: fn)
+
+
 # ---------------------------------------------------------------------------
 # MCP Resources — 只读上下文，供模型按需获取
 # ---------------------------------------------------------------------------
@@ -864,6 +873,12 @@ def report_prompt(period: str = "今天") -> str:
         f"\n"
         f"报告要简洁专业、数据准确、结论清晰。\n"
     )
+
+
+mcp.resource = _real_mcp_resource
+mcp.prompt = _real_mcp_prompt
+register_resources(mcp, SETTINGS, SSH, STATE_STORE, TRACKER)
+register_prompts(mcp)
 
 
 def main() -> None:

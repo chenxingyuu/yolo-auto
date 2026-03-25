@@ -1,0 +1,311 @@
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from mcp.server.fastmcp import FastMCP
+
+from yolo_auto.config import Settings
+from yolo_auto.models import JobStatus
+from yolo_auto.ssh_client import SSHClient
+from yolo_auto.state_store import JobStateStore
+from yolo_auto.tracker import MLflowTracker
+
+
+def register_resources(
+    mcp: FastMCP,
+    settings: Settings,
+    ssh_client: SSHClient,
+    state_store: JobStateStore,
+    tracker: MLflowTracker,
+) -> None:
+    """Register MCP Resources for read-only background context."""
+
+    @mcp.resource(
+        "yolo://config",
+        name="current-config",
+        description="当前生效的环境配置概要（已脱敏，不含密钥与 webhook 完整 URL）。",
+        mime_type="application/json",
+    )
+    def resource_config() -> str:
+        return json.dumps(
+            {
+                "ssh": {
+                    "host": settings.yolo_ssh_host,
+                    "port": settings.yolo_ssh_port,
+                    "user": settings.yolo_ssh_user,
+                },
+                "workDir": settings.yolo_work_dir,
+                "datasetsDir": settings.yolo_datasets_dir,
+                "jobsDir": settings.yolo_jobs_dir,
+                "modelsDir": settings.yolo_models_dir,
+                "stateFile": settings.yolo_state_file,
+                "mlflow": {
+                    "trackingUri": settings.mlflow_tracking_uri,
+                    "experimentName": settings.mlflow_experiment_name,
+                },
+                "feishu": {
+                    "reportEnable": settings.feishu_report_enable,
+                    "reportEveryNEpochs": settings.feishu_report_every_n_epochs,
+                    "messageMode": settings.feishu_message_mode,
+                },
+                "primaryMetric": settings.primary_metric_key,
+                "watchPollIntervalSeconds": settings.watch_poll_interval_seconds,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    @mcp.resource(
+        "yolo://jobs/active",
+        name="active-jobs",
+        description="当前运行中或排队中的训练任务列表（从本地状态文件读取，不触发 SSH）。",
+        mime_type="application/json",
+    )
+    def resource_active_jobs() -> str:
+        records = state_store.list_all()
+        active = [
+            r.to_dict()
+            for r in records
+            if r.status in (JobStatus.RUNNING, JobStatus.QUEUED)
+        ]
+        return json.dumps(
+            {"activeJobs": active, "count": len(active)},
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    @mcp.resource(
+        "yolo://jobs/history",
+        name="job-history",
+        description="最近 50 条训练任务记录（含已完成/失败/停止），不触发 SSH。",
+        mime_type="application/json",
+    )
+    def resource_job_history() -> str:
+        records = state_store.list_all()[:50]
+        items = [r.to_dict() for r in records]
+        return json.dumps(
+            {"jobs": items, "count": len(items)},
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    @mcp.resource(
+        "yolo://mlflow/leaderboard",
+        name="mlflow-leaderboard",
+        description="MLflow 实验中按主指标排序的 Top 10 runs 排行榜。",
+        mime_type="application/json",
+    )
+    def resource_mlflow_leaderboard() -> str:
+        top_runs = tracker.summarize_top_runs(settings.primary_metric_key, limit=10)
+        return json.dumps(
+            {
+                "metricKey": settings.primary_metric_key,
+                "topRuns": top_runs,
+                "count": len(top_runs),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    @mcp.resource(
+        "yolo://datasets",
+        name="remote-datasets",
+        description="远程服务器 datasets 目录下的 YAML 数据集配置文件列表。",
+        mime_type="application/json",
+    )
+    def resource_datasets() -> str:
+        try:
+            stdout, _, code = ssh_client.execute(
+                f"find {settings.yolo_datasets_dir} -maxdepth 3 -name '*.yaml' -o -name '*.yml'"
+                " 2>/dev/null | head -50 | sort",
+                timeout=10,
+            )
+            if code != 0:
+                files: list[str] = []
+            else:
+                files = [line.strip() for line in stdout.splitlines() if line.strip()]
+        except Exception:
+            files = []
+        return json.dumps(
+            {
+                "datasetsDir": settings.yolo_datasets_dir,
+                "files": files,
+                "count": len(files),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    @mcp.resource(
+        "yolo://models",
+        name="remote-models",
+        description="远程服务器 models 目录下的预训练权重文件（.pt）列表及大小。",
+        mime_type="application/json",
+    )
+    def resource_models() -> str:
+        try:
+            cmd = (
+                f"find {settings.yolo_models_dir} -maxdepth 2 -name '*.pt' "
+                "-exec ls -lh {{}} \\; 2>/dev/null | awk '{print $5, $NF}' | sort"
+            )
+            stdout, _, code = ssh_client.execute(cmd, timeout=10)
+            if code != 0:
+                models: list[dict[str, str]] = []
+            else:
+                models = []
+                for line in stdout.splitlines():
+                    parts = line.strip().split(None, 1)
+                    if len(parts) == 2:
+                        models.append({"size": parts[0], "path": parts[1]})
+        except Exception:
+            models = []
+        return json.dumps(
+            {
+                "modelsDir": settings.yolo_models_dir,
+                "models": models,
+                "count": len(models),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    @mcp.resource(
+        "yolo://env/gpu",
+        name="gpu-info",
+        description="远程服务器 GPU 型号、显存、使用率、温度等（nvidia-smi）。",
+        mime_type="application/json",
+    )
+    def resource_gpu_info() -> str:
+        try:
+            stdout, _, code = ssh_client.execute(
+                "nvidia-smi --query-gpu=index,name,memory.total,memory.used,"
+                "memory.free,utilization.gpu,utilization.memory,temperature.gpu"
+                " --format=csv,noheader,nounits",
+                timeout=10,
+            )
+            gpus: list[dict[str, str | int | float]] = []
+            if code == 0:
+                for line in stdout.strip().splitlines():
+                    parts = [p.strip() for p in line.split(",")]
+                    if len(parts) >= 8:
+                        gpus.append(
+                            {
+                                "index": int(parts[0]),
+                                "name": parts[1],
+                                "memoryTotalMB": int(parts[2]),
+                                "memoryUsedMB": int(parts[3]),
+                                "memoryFreeMB": int(parts[4]),
+                                "gpuUtil%": int(parts[5]),
+                                "memUtil%": int(parts[6]),
+                                "tempC": int(parts[7]),
+                            }
+                        )
+        except Exception:
+            gpus = []
+        return json.dumps(
+            {"gpus": gpus, "count": len(gpus)},
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    @mcp.resource(
+        "yolo://env/system",
+        name="system-info",
+        description="远程服务器 CPU、内存、磁盘概况。",
+        mime_type="application/json",
+    )
+    def resource_system_info() -> str:
+        info: dict[str, Any] = {}
+        try:
+            cpu_out, _, _ = ssh_client.execute(
+                "nproc && lscpu | grep 'Model name' | sed 's/.*: *//'",
+                timeout=10,
+            )
+            cpu_lines = cpu_out.strip().splitlines()
+            info["cpu"] = {
+                "cores": int(cpu_lines[0]) if cpu_lines else 0,
+                "model": cpu_lines[1].strip() if len(cpu_lines) > 1 else "",
+            }
+
+            mem_out, _, _ = ssh_client.execute(
+                "free -m | awk '/^Mem:/{print $2,$3,$4}'",
+                timeout=10,
+            )
+            mem_parts = mem_out.strip().split()
+            if len(mem_parts) >= 3:
+                info["memoryMB"] = {
+                    "total": int(mem_parts[0]),
+                    "used": int(mem_parts[1]),
+                    "free": int(mem_parts[2]),
+                }
+
+            disk_out, _, _ = ssh_client.execute(
+                "df -BG /workspace 2>/dev/null | awk 'NR==2{print $2,$3,$4,$5}'",
+                timeout=10,
+            )
+            disk_parts = disk_out.strip().split()
+            if len(disk_parts) >= 4:
+                info["diskWorkspace"] = {
+                    "totalGB": disk_parts[0].rstrip("G"),
+                    "usedGB": disk_parts[1].rstrip("G"),
+                    "availGB": disk_parts[2].rstrip("G"),
+                    "usePercent": disk_parts[3],
+                }
+        except Exception:
+            pass
+        return json.dumps(info, ensure_ascii=False, indent=2)
+
+    @mcp.resource(
+        "yolo://guide/training-params",
+        name="training-params-guide",
+        description="Ultralytics YOLO 训练参数速查与推荐值范围，帮助模型给出合理的参数建议。",
+        mime_type="text/markdown",
+    )
+    def resource_training_params_guide() -> str:
+        return """\
+# YOLO 训练参数速查
+
+## 核心参数
+| 参数 | CLI 名 | 类型 | 推荐范围 | 说明 |
+|------|--------|------|----------|------|
+| model | model | str | yolov8n/s/m/l/x.pt | n=最快, x=最精, 按需选 |
+| epochs | epochs | int | 50–300 | 小数据集 100+, 大数据集 50–150 |
+| imgSize | imgsz | int | 320–1280 | 640 为平衡点, 精度优先用 1280 |
+| batch | batch | int/float | 8–64 / 0.6–0.9 | 显存允许尽量大; 小数为自动显存比 |
+| learningRate | lr0 | float | 0.001–0.02 | SGD 常用 0.01, AdamW 常用 0.001 |
+
+## 常用可选参数
+| 参数 | CLI 名 | 默认 | 建议 |
+|------|--------|------|------|
+| optimizer | optimizer | auto | SGD(稳) / AdamW(快收敛) |
+| patience | patience | 100 | 20–50 可加速早停 |
+| cosLr | cos_lr | False | True 后期精度常更好 |
+| amp | amp | True | 保持 True 加速 |
+| cache | cache | False | ram(快) / disk(省内存) |
+| workers | workers | 8 | 与 CPU 核数匹配 |
+| freeze | freeze | None | 迁移学习冻结 backbone: 10 |
+| closeMosaic | close_mosaic | 10 | 最后 10–20 epoch 关 mosaic |
+
+## 模型选择指南
+容器内预下载权重位于 `/workspace/models/`，涵盖 v5/v8/11/26 全系列 detect，
+可直接用绝对路径避免重复下载。
+
+| 场景 | model 参数 | imgSize | batch |
+|------|-----------|---------|-------|
+| 快速验证 | /workspace/models/yolo26n.pt | 640 | 32 |
+| 生产部署(速度优先) | /workspace/models/yolo26s.pt | 640 | 16 |
+| 生产部署(精度优先) | /workspace/models/yolo26m.pt 或 l | 1280 | 8 |
+| 竞赛/极致精度 | /workspace/models/yolo26x.pt | 1280 | 4–8 |
+| 旧版兼容 | /workspace/models/yolov8*.pt 或 yolov5*.pt | 640 | 16 |
+
+可用系列：yolov5n~x / yolov8n~x / yolo11n~x / yolo26n~x（共 20 个 .pt）
+
+## 调参经验
+- **欠拟合**: 增大模型(n→s→m)、增加 epochs、提高 lr
+- **过拟合**: 增加数据增强、降低 lr、使用早停(patience=30)、增大数据集
+- **OOM**: 降低 batch、降低 imgSize、使用 amp=True
+- **训练慢**: 使用 cache=ram、增大 batch、用更小模型先验证
+"""
+
+
