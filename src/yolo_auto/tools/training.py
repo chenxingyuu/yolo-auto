@@ -117,9 +117,23 @@ def start_training(
         last_reported_epoch=0,
     )
     state_store.upsert(record)
-    notifier.send_training_update(
-        "[YOLO] 训练已启动",
-        f"job={req.job_id}\npid={pid}\nrunId={run_id}\nepochs={req.epochs}",
+    mlflow_url = tracker.get_run_url(run_id)
+    notifier.send_rich_card(
+        title="[YOLO] 训练已启动",
+        md_text=f"job={req.job_id}\npid={pid}\nrunId={run_id}\nepochs={req.epochs}",
+        header_color="blue",
+        actions=(
+            [
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "查看 MLflow"},
+                    "type": "url",
+                    "url": mlflow_url,
+                }
+            ]
+            if mlflow_url
+            else None
+        ),
     )
     return ok(record.to_dict())
 
@@ -161,15 +175,43 @@ def stop_training(
     if record:
         updated = state_store.update_status(job_id, JobStatus.STOPPED, now)
         if updated.last_notified_state != JobStatus.STOPPED:
-            notifier.send_training_update(
-                "[YOLO] 训练已停止",
-                f"job={job_id}\nrunId={effective_run_id}",
+            mlflow_url = tracker.get_run_url(effective_run_id)
+            notifier.send_rich_card(
+                title="[YOLO] 训练已停止",
+                md_text=f"job={job_id}\nrunId={effective_run_id}",
+                header_color="orange",
+                actions=(
+                    [
+                        {
+                            "tag": "button",
+                            "text": {"tag": "plain_text", "content": "查看 MLflow"},
+                            "type": "url",
+                            "url": mlflow_url,
+                        }
+                    ]
+                    if mlflow_url
+                    else None
+                ),
             )
             state_store.mark_notified(job_id, JobStatus.STOPPED, now)
         return ok(updated.to_dict())
-    notifier.send_training_update(
-        "[YOLO] 训练已停止",
-        f"job={job_id}\nrunId={effective_run_id}",
+    mlflow_url = tracker.get_run_url(effective_run_id)
+    notifier.send_rich_card(
+        title="[YOLO] 训练已停止",
+        md_text=f"job={job_id}\nrunId={effective_run_id}",
+        header_color="orange",
+        actions=(
+            [
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "查看 MLflow"},
+                    "type": "url",
+                    "url": mlflow_url,
+                }
+            ]
+            if mlflow_url
+            else None
+        ),
     )
     return ok({"jobId": job_id, "runId": effective_run_id, "status": JobStatus.STOPPED.value})
 

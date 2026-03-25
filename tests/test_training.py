@@ -36,7 +36,7 @@ def test_start_training_success(
     assert result["status"] == JobStatus.RUNNING.value
     assert state_store.get("job-1") is not None
     mock_ssh.execute_background.assert_called_once()
-    mock_notifier.send_training_update.assert_called()
+    mock_notifier.send_rich_card.assert_called()
 
 
 def test_start_training_duplicate(
@@ -63,7 +63,7 @@ def test_start_training_duplicate(
 
     mock_ssh.execute_background.reset_mock()
     mock_tracker.start_run.reset_mock()
-    mock_notifier.send_training_update.reset_mock()
+    mock_notifier.send_rich_card.reset_mock()
 
     result = start_training(req, mock_ssh, mock_notifier, mock_tracker, state_store)
     assert result["ok"] is True
@@ -71,7 +71,7 @@ def test_start_training_duplicate(
     assert result["status"] == JobStatus.RUNNING.value
     mock_ssh.execute_background.assert_not_called()
     mock_tracker.start_run.assert_not_called()
-    mock_notifier.send_training_update.assert_not_called()
+    mock_notifier.send_rich_card.assert_not_called()
 
 
 def test_start_training_ssh_fail(

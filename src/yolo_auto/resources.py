@@ -33,6 +33,11 @@ def register_resources(
         mime_type="application/json",
     )
     def resource_config() -> str:
+        feishu_mode = (
+            "app_bot"
+            if (settings.feishu_app_id and settings.feishu_app_secret and settings.feishu_chat_id)
+            else "webhook"
+        )
         return json.dumps(
             {
                 "ssh": {
@@ -48,11 +53,13 @@ def register_resources(
                 "mlflow": {
                     "trackingUri": settings.mlflow_tracking_uri,
                     "experimentName": settings.mlflow_experiment_name,
+                    "externalUrl": settings.mlflow_external_url,
                 },
                 "feishu": {
                     "reportEnable": settings.feishu_report_enable,
                     "reportEveryNEpochs": settings.feishu_report_every_n_epochs,
                     "messageMode": "card",
+                    "mode": feishu_mode,
                 },
                 "primaryMetric": settings.primary_metric_key,
                 "watchPollIntervalSeconds": settings.watch_poll_interval_seconds,

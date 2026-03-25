@@ -12,6 +12,7 @@ from mlflow.entities import Run
 class TrackerConfig:
     tracking_uri: str
     experiment_name: str
+    external_url: str | None = None
 
 
 class MLflowTracker:
@@ -19,6 +20,36 @@ class MLflowTracker:
         mlflow.set_tracking_uri(config.tracking_uri)
         mlflow.set_experiment(config.experiment_name)
         self._experiment_name = config.experiment_name
+        self._external_url = (config.external_url or "").strip() or None
+        self._experiment_id: str | None = None
+
+    def _get_experiment_id(self) -> str | None:
+        if self._experiment_id is not None:
+            return self._experiment_id
+        try:
+            exp = mlflow.get_experiment_by_name(self._experiment_name)
+        except Exception:
+            exp = None
+        self._experiment_id = exp.experiment_id if exp else None
+        return self._experiment_id
+
+    def get_run_url(self, run_id: str) -> str | None:
+        if not self._external_url:
+            return None
+        exp_id = self._get_experiment_id()
+        if not exp_id:
+            return None
+        base = self._external_url.rstrip("/")
+        return f"{base}/#/experiments/{exp_id}/runs/{run_id}"
+
+    def get_experiment_url(self) -> str | None:
+        if not self._external_url:
+            return None
+        exp_id = self._get_experiment_id()
+        if not exp_id:
+            return None
+        base = self._external_url.rstrip("/")
+        return f"{base}/#/experiments/{exp_id}"
 
     def start_run(self, job_id: str, config: dict[str, Any]) -> str:
         if mlflow.active_run() is not None:

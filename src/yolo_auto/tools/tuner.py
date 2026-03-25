@@ -152,6 +152,33 @@ def auto_tune(
     disagreement = False
     if best_mlflow is not None:
         disagreement = abs(float(best_mlflow["metric"]) - float(best_trial["metric"])) > 1e-4
+
+    try:
+        exp_url = tracker.get_experiment_url()
+        notifier.send_rich_card(
+            title="[YOLO] 调参完成",
+            md_text=(
+                f"baseJobId={req.base_job_id}\n"
+                f"bestJobId={best_trial['jobId']}\n"
+                f"{req.primary_metric_key}={float(best_trial['metric']):.4f}\n"
+                f"trials={len(trials)}"
+            ),
+            header_color="green",
+            actions=(
+                [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "查看 MLflow 实验"},
+                        "type": "url",
+                        "url": exp_url,
+                    }
+                ]
+                if exp_url
+                else None
+            ),
+        )
+    except Exception:
+        pass
     return ok(
         {
             "envId": req.env_id,

@@ -14,12 +14,16 @@ class Settings:
     yolo_ssh_user: str
     yolo_ssh_key_path: str
     yolo_ssh_envs: dict[str, SSHEnv]
-    feishu_webhook_url: str
+    feishu_webhook_url: str | None
+    feishu_app_id: str | None
+    feishu_app_secret: str | None
+    feishu_chat_id: str | None
     feishu_report_enable: bool
     feishu_report_every_n_epochs: int
     primary_metric_key: str
     mlflow_tracking_uri: str
     mlflow_experiment_name: str
+    mlflow_external_url: str | None
     yolo_work_dir: str
     yolo_datasets_dir: str
     yolo_jobs_dir: str
@@ -46,6 +50,14 @@ def _get_env(name: str, default: str | None = None) -> str:
     if value is None or value.strip() == "":
         raise ValueError(f"Missing required env: {name}")
     return value
+
+
+def _get_env_optional(name: str) -> str | None:
+    value = os.getenv(name)
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
 
 
 def load_settings() -> Settings:
@@ -100,13 +112,25 @@ def load_settings() -> Settings:
         }
 
     default_env = envs["default"]
+    feishu_webhook_url = _get_env_optional("FEISHU_WEBHOOK_URL")
+    feishu_app_id = _get_env_optional("FEISHU_APP_ID")
+    feishu_app_secret = _get_env_optional("FEISHU_APP_SECRET")
+    feishu_chat_id = _get_env_optional("FEISHU_CHAT_ID")
+    if not feishu_webhook_url and not (feishu_app_id and feishu_app_secret and feishu_chat_id):
+        raise ValueError(
+            "Missing Feishu config: set FEISHU_WEBHOOK_URL "
+            "or (FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_CHAT_ID)"
+        )
     return Settings(
         yolo_ssh_host=default_env.host,
         yolo_ssh_port=default_env.port,
         yolo_ssh_user=default_env.user,
         yolo_ssh_key_path=default_env.key_path,
         yolo_ssh_envs=envs,
-        feishu_webhook_url=_get_env("FEISHU_WEBHOOK_URL"),
+        feishu_webhook_url=feishu_webhook_url,
+        feishu_app_id=feishu_app_id,
+        feishu_app_secret=feishu_app_secret,
+        feishu_chat_id=feishu_chat_id,
         feishu_report_enable=_env_truthy(_get_env("FEISHU_REPORT_ENABLE", "true")),
         feishu_report_every_n_epochs=max(
             0, int(_get_env("FEISHU_REPORT_EVERY_N_EPOCHS", "5"))
@@ -114,6 +138,7 @@ def load_settings() -> Settings:
         primary_metric_key=_get_env("YOLO_PRIMARY_METRIC", "map5095"),
         mlflow_tracking_uri=_get_env("MLFLOW_TRACKING_URI", "./mlruns"),
         mlflow_experiment_name=_get_env("MLFLOW_EXPERIMENT_NAME", "yolo-auto"),
+        mlflow_external_url=_get_env_optional("MLFLOW_EXTERNAL_URL"),
         yolo_work_dir=_get_env("YOLO_WORK_DIR", "/workspace/yolo-auto"),
         yolo_datasets_dir=_get_env("YOLO_DATASETS_DIR", "/workspace/datasets"),
         yolo_jobs_dir=_get_env("YOLO_JOBS_DIR", "/workspace/jobs"),

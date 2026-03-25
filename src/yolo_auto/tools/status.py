@@ -83,6 +83,20 @@ def _generate_loss_map_chart_png_b64(
     return base64.b64encode(png_bytes).decode("ascii")
 
 
+def _generate_loss_map_chart_png(
+    rows: list[dict[str, Any]],
+    *,
+    primary_metric_key: str,
+) -> bytes | None:
+    b64 = _generate_loss_map_chart_png_b64(rows, primary_metric_key=primary_metric_key)
+    if not b64:
+        return None
+    try:
+        return base64.b64decode(b64)
+    except Exception:
+        return None
+
+
 def get_status(
     job_id: str,
     run_id: str,
@@ -181,13 +195,30 @@ def get_status(
         n = feishu_report_every_n_epochs
         if n > 0 and epoch > 0 and epoch >= record.last_reported_epoch + n:
             title = "[YOLO] 训练里程碑"
+            mlflow_url = tracker.get_run_url(effective_run_id)
             body = (
                 f"job={job_id}\n"
                 f"epoch={epoch}/{total_epochs}\n"
                 f"{primary_metric_key}={primary_value:.4f}\n"
                 f"runId={effective_run_id}"
             )
-            notifier.send_training_update(title, body)
+            notifier.send_rich_card(
+                title=title,
+                md_text=body,
+                header_color="blue",
+                actions=(
+                    [
+                        {
+                            "tag": "button",
+                            "text": {"tag": "plain_text", "content": "查看 MLflow"},
+                            "type": "url",
+                            "url": mlflow_url,
+                        }
+                    ]
+                    if mlflow_url
+                    else None
+                ),
+            )
             record = state_store.mark_milestone_epoch(job_id, epoch, now)
 
     if not ssh_client.process_alive(record.pid):
@@ -195,6 +226,7 @@ def get_status(
         tracker.finish_run(effective_run_id, updated.paths.get("bestPath"))
         if updated.last_notified_state != JobStatus.COMPLETED:
             title = "[YOLO] 任务完成"
+            mlflow_url = tracker.get_run_url(effective_run_id)
             body = (
                 f"job={job_id}\n"
                 f"loss={loss:.4f}\n"
@@ -202,18 +234,51 @@ def get_status(
                 f"{primary_metric_key}={primary_value:.4f}\n"
                 f"runId={effective_run_id}"
             )
-            chart_b64: str | None = None
+            chart_png: bytes | None = None
             if feishu_report_enable:
-                chart_b64 = _generate_loss_map_chart_png_b64(
+                chart_png = _generate_loss_map_chart_png(
                     rows,
                     primary_metric_key=primary_metric_key,
                 )
 
             try:
-                if chart_b64:
-                    notifier.send_training_completed_with_chart(title, body, chart_b64)  # type: ignore[attr-defined]
+                if chart_png:
+                    notifier.send_training_completed_with_chart_png(
+                        title=title,
+                        body_md=body,
+                        chart_png=chart_png,
+                        header_color="green",
+                        actions=(
+                            [
+                                {
+                                    "tag": "button",
+                                    "text": {"tag": "plain_text", "content": "查看 MLflow"},
+                                    "type": "url",
+                                    "url": mlflow_url,
+                                }
+                            ]
+                            if mlflow_url
+                            else None
+                        ),
+                    )
                 else:
-                    notifier.send_training_update(title, body)
+                    notifier.send_rich_card(
+                        title=title,
+                        md_text=body,
+                        header_color="green",
+                        actions=(
+                            [
+                                {
+                                    "tag": "button",
+                                    "text": {"tag": "plain_text", "content": "查看 MLflow"},
+                                    "type": "url",
+                                    "url": mlflow_url,
+                                }
+                            ]
+                            if mlflow_url
+                            else None
+                        ),
+                    )
             except Exception:
                 notifier.send_training_update(title, body)
             state_store.mark_notified(job_id, JobStatus.COMPLETED, now)
