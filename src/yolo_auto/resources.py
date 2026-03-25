@@ -52,7 +52,7 @@ def register_resources(
                 "feishu": {
                     "reportEnable": settings.feishu_report_enable,
                     "reportEveryNEpochs": settings.feishu_report_every_n_epochs,
-                    "messageMode": settings.feishu_message_mode,
+                    "messageMode": "card",
                 },
                 "primaryMetric": settings.primary_metric_key,
                 "watchPollIntervalSeconds": settings.watch_poll_interval_seconds,

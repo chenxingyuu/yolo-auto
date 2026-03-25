@@ -37,7 +37,7 @@ for env_id, ssh_env in SETTINGS.yolo_ssh_envs.items():
         )
     )
 SSH = SSH_BY_ENV["default"]
-NOTIFIER = FeishuNotifier(SETTINGS.feishu_webhook_url, SETTINGS.feishu_message_mode)
+NOTIFIER = FeishuNotifier(SETTINGS.feishu_webhook_url)
 TRACKER = MLflowTracker(
     TrackerConfig(
         tracking_uri=SETTINGS.mlflow_tracking_uri,
@@ -591,7 +591,7 @@ def resource_config() -> str:
             "feishu": {
                 "reportEnable": SETTINGS.feishu_report_enable,
                 "reportEveryNEpochs": SETTINGS.feishu_report_every_n_epochs,
-                "messageMode": SETTINGS.feishu_message_mode,
+                "messageMode": "card",
             },
             "primaryMetric": SETTINGS.primary_metric_key,
             "watchPollIntervalSeconds": SETTINGS.watch_poll_interval_seconds,

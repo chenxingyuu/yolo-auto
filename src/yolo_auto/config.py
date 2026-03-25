@@ -17,7 +17,6 @@ class Settings:
     feishu_webhook_url: str
     feishu_report_enable: bool
     feishu_report_every_n_epochs: int
-    feishu_message_mode: str
     primary_metric_key: str
     mlflow_tracking_uri: str
     mlflow_experiment_name: str
@@ -112,7 +111,6 @@ def load_settings() -> Settings:
         feishu_report_every_n_epochs=max(
             0, int(_get_env("FEISHU_REPORT_EVERY_N_EPOCHS", "5"))
         ),
-        feishu_message_mode=_get_env("FEISHU_MESSAGE_MODE", "text").lower(),
         primary_metric_key=_get_env("YOLO_PRIMARY_METRIC", "map5095"),
         mlflow_tracking_uri=_get_env("MLFLOW_TRACKING_URI", "./mlruns"),
         mlflow_experiment_name=_get_env("MLFLOW_EXPERIMENT_NAME", "yolo-auto"),
