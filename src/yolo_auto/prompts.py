@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from typing import Annotated
+
 from mcp.server.fastmcp import FastMCP
+from pydantic import Field
 
 
 def register_prompts(mcp: FastMCP) -> None:
@@ -8,9 +11,18 @@ def register_prompts(mcp: FastMCP) -> None:
 
     @mcp.prompt(name="quick-train")
     def quick_train_prompt(
-        dataset: str,
-        model: str = "yolov8n.pt",
-        epochs: str = "100",
+        dataset: Annotated[
+            str,
+            Field(description="数据集 YAML 路径，如 /workspace/datasets/coco.yaml"),
+        ],
+        model: Annotated[
+            str,
+            Field(description="模型权重路径或名称，如 yolov8n.pt 或 /workspace/models/yolo26n.pt"),
+        ] = "yolov8n.pt",
+        epochs: Annotated[
+            str,
+            Field(description="训练轮数"),
+        ] = "100",
     ) -> str:
         """一句话启动训练：环境检查 → 启动 → 首次状态确认。"""
         return (
@@ -54,7 +66,12 @@ def register_prompts(mcp: FastMCP) -> None:
         )
 
     @mcp.prompt(name="compare-experiments")
-    def compare_experiments_prompt(job_ids: str) -> str:
+    def compare_experiments_prompt(
+        job_ids: Annotated[
+            str,
+            Field(description="要对比的任务 ID，用逗号分隔，如 job-001,job-002,job-003"),
+        ],
+    ) -> str:
         """对比多个实验并给出最佳推荐。job_ids 逗号分隔。"""
         ids = [jid.strip() for jid in job_ids.split(",")]
         job_list = "\n".join(f"   - {jid}" for jid in ids)
@@ -73,9 +90,18 @@ def register_prompts(mcp: FastMCP) -> None:
 
     @mcp.prompt(name="smart-tune")
     def smart_tune_prompt(
-        dataset: str,
-        model: str = "yolov8n.pt",
-        goal: str = "精度与速度兼顾",
+        dataset: Annotated[
+            str,
+            Field(description="数据集 YAML 路径，如 /workspace/datasets/coco.yaml"),
+        ],
+        model: Annotated[
+            str,
+            Field(description="基础模型权重路径或名称"),
+        ] = "yolov8n.pt",
+        goal: Annotated[
+            str,
+            Field(description="优化目标：如「精度优先」「速度优先」「精度与速度兼顾」"),
+        ] = "精度与速度兼顾",
     ) -> str:
         """根据业务目标智能推荐调参策略并一键执行。"""
         return (
@@ -113,7 +139,12 @@ def register_prompts(mcp: FastMCP) -> None:
         )
 
     @mcp.prompt(name="diagnose")
-    def diagnose_prompt(job_id: str) -> str:
+    def diagnose_prompt(
+        job_id: Annotated[
+            str,
+            Field(description="需要诊断的训练任务 ID"),
+        ],
+    ) -> str:
         """诊断训练任务异常：检查 → 定位 → 给出修复方案。"""
         return (
             f"任务 {job_id} 可能出了问题，请帮我诊断：\n"
@@ -128,7 +159,12 @@ def register_prompts(mcp: FastMCP) -> None:
         )
 
     @mcp.prompt(name="report")
-    def report_prompt(period: str = "今天") -> str:
+    def report_prompt(
+        period: Annotated[
+            str,
+            Field(description="报告周期，如「今天」「本周」「最近 3 天」"),
+        ] = "今天",
+    ) -> str:
         """生成可直接转发给团队/上级的训练进展报告。"""
         return (
             f"请帮我生成「{period}」的训练进展报告（适合发飞书群/汇报）：\n"

@@ -1,0 +1,37 @@
+---
+description: 当用户提到训练、YOLO、目标检测、GPU、数据集、调参、mAP、模型导出等关键词时自动激活
+globs:
+alwaysApply: false
+---
+
+# YOLO Auto MCP 使用指南
+
+本项目是一个 MCP Server（`user-yolo-auto`），用于通过 SSH 在远程 GPU 容器上编排 YOLO 目标检测训练。
+
+## 核心原则
+
+1. **操作前先读资源**：在调用任何 MCP 工具之前，先通过 `FetchMcpResource` 获取相关上下文：
+   - 开始任何操作前 → 读取 `yolo://config` 了解当前配置
+   - 选择数据集时 → 读取 `yolo://datasets` 查看可用数据集
+   - 选择模型时 → 读取 `yolo://models` 查看可用权重
+   - 决定 batch/device 时 → 读取 `yolo://env/gpu` 查看 GPU 状态
+   - 查看任务时 → 读取 `yolo://jobs/active` 或 `yolo://jobs/history`
+   - 推荐参数时 → 读取 `yolo://guide/training-params`
+
+2. **通过 `CallMcpTool` 调用工具**：所有训练操作使用 `user-yolo-auto` 服务器的工具：
+   - `yolo_setup_env` — 环境检查
+   - `yolo_start_training` — 启动训练
+   - `yolo_get_status` — 查询进度
+   - `yolo_stop_training` — 停止训练
+   - `yolo_list_jobs` — 列出任务
+   - `yolo_get_job` — 查询单任务
+   - `yolo_validate` — 运行验证
+   - `yolo_export` — 导出模型
+   - `yolo_auto_tune` — 自动调参
+
+3. **标准工作流**：`setup_env` → `start_training` → 周期 `get_status` → 完成后 `validate` / `export`
+
+4. **关键约定**：
+   - 远程路径：数据集在 `/workspace/datasets/`，模型在 `/workspace/models/`
+   - `get_status` 和 `stop_training` 需要 `jobId` + `runId`（从 `start_training` 返回值获取）
+   - 启动训练前必须先调用 `setup_env` 验证环境
