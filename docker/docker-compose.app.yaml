@@ -1,17 +1,15 @@
 services:
   mcp:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.app
-    image: yolo-auto-app:latest
+    image: registry.cn-hangzhou.aliyuncs.com/daxx/yolo-auto-app:latest
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "8321:8321"
+    env_file: .env
     environment:
       # MCP HTTP transport (Streamable HTTP)
       MCP_TRANSPORT: http
       MCP_HOST: 0.0.0.0
-      MCP_PORT: "8000"
+      MCP_PORT: "8321"
       MCP_PATH: /mcp/
 
       # Shared state file for jobs
@@ -33,18 +31,16 @@ services:
     secrets:
       - yolo_ssh_key
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8321/health"]
       interval: 10s
       timeout: 3s
       retries: 10
 
   worker:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.app
-    image: yolo-auto-app:latest
+    image: registry.cn-hangzhou.aliyuncs.com/daxx/yolo-auto-app:latest
     restart: unless-stopped
     command: ["uv", "run", "yolo-auto-watch"]
+    env_file: .env
     environment:
       YOLO_STATE_FILE: /data/state/jobs.json
       YOLO_WATCH_LOCK_FILE: /data/state/watch.lock
@@ -59,16 +55,11 @@ services:
       - mlflow-data:/data/mlflow
     secrets:
       - yolo_ssh_key
-    depends_on:
-      mcp:
-        condition: service_healthy
 
   mlflow-ui:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.app
-    image: yolo-auto-app:latest
+    image: registry.cn-hangzhou.aliyuncs.com/daxx/yolo-auto-app:latest
     restart: unless-stopped
+    env_file: .env
     command:
       [
         "uv",
@@ -96,5 +87,4 @@ volumes:
 secrets:
   # Create file at docker/secrets/yolo_ssh_key (or override with your own path).
   yolo_ssh_key:
-    file: ./secrets/yolo_ssh_key
-
+    file: ./secrets/id_rsa
