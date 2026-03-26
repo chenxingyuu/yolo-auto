@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN mkdir -p /var/run/sshd
 
-ENV WORKDIR=/workspace/yolo-auto
+ENV WORKDIR=/workspace/
 RUN mkdir -p ${WORKDIR} /workspace/datasets /workspace/jobs /workspace/models
 
 WORKDIR ${WORKDIR}
