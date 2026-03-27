@@ -1,15 +1,23 @@
 # 这里用你已经构建好的镜像当基础镜像
 # 如果你是用官方 Dockerfile 构建的，就填你自己的 tag，比如：
 # FROM ultralytics/ultralytics:latest
-FROM ultralytics/ultralytics:v8.4.22
+FROM ultralytics/ultralytics:8.4.30
 
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=Asia/Shanghai
 
-# 安装 openssh-server（保持 root）
+# 安装 openssh-server（保持 root）和 MinIO 客户端依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
     openssh-server \
+    vim \
     && rm -rf /var/lib/apt/lists/*
+
+# 安装 MinIO Client（mc），用于同步 MinIO/S3 数据集到本地训练目录
+RUN curl -fsSL "https://dl.min.io/client/mc/release/linux-amd64/mc" -o /usr/local/bin/mc \
+&& chmod +x /usr/local/bin/mc \
+&& mc --version
 
 RUN mkdir -p /var/run/sshd
 
