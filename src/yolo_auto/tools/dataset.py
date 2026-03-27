@@ -25,6 +25,20 @@ def list_cvat_tasks(
     return ok({"tasks": tasks, "count": len(tasks)})
 
 
+def list_cvat_formats(cvat_client: CVATClient) -> dict[str, Any]:
+    formats = cvat_client.list_formats()
+    exporters = formats.get("exporters", [])
+    importers = formats.get("importers", [])
+    return ok(
+        {
+            "exporters": exporters,
+            "importers": importers,
+            "exporterCount": len(exporters),
+            "importerCount": len(importers),
+        }
+    )
+
+
 def get_cvat_task_detail(cvat_client: CVATClient, task_id: int) -> dict[str, Any]:
     detail = cvat_client.get_task_details(task_id)
     return ok({"task": detail})

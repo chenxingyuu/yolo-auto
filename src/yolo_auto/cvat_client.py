@@ -35,6 +35,16 @@ class CVATClient:
                 items.append(self._task_summary(task))
             return items
 
+    def list_formats(self) -> dict[str, list[dict[str, Any]]]:
+        with self._build_client() as client:
+            payload, _ = client.api_client.server_api.retrieve_annotation_formats()
+            exporters = list(getattr(payload, "exporters", []) or [])
+            importers = list(getattr(payload, "importers", []) or [])
+            return {
+                "exporters": [self._format_item(fmt) for fmt in exporters],
+                "importers": [self._format_item(fmt) for fmt in importers],
+            }
+
     def get_task_details(self, task_id: int) -> dict[str, Any]:
         with self._build_client() as client:
             task = client.tasks.retrieve(task_id)
@@ -181,4 +191,14 @@ class CVATClient:
                 for label in labels
             ],
             "url": f"{self._config.url.rstrip('/')}/tasks/{task.id}",
+        }
+
+    @staticmethod
+    def _format_item(item: Any) -> dict[str, Any]:
+        return {
+            "name": str(getattr(item, "name", "")),
+            "displayName": str(getattr(item, "display_name", "")),
+            "enabled": bool(getattr(item, "enabled", True)),
+            "version": str(getattr(item, "version", "")),
+            "ext": str(getattr(item, "ext", "")),
         }

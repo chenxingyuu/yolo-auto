@@ -65,6 +65,64 @@ def register_prompts(mcp: FastMCP) -> None:
             "6. 最后用一句话总结全局情况（如「2 个运行中、1 个已完成、最佳 mAP 72.3%」）\n"
         )
 
+    @mcp.prompt(name="export-dataset")
+    def export_dataset_prompt(
+        task_id: Annotated[
+            int,
+            Field(description="CVAT 任务 ID"),
+        ],
+        dataset_name: Annotated[
+            str,
+            Field(description="导出后在远程 datasets 目录下的目标数据集名称"),
+        ],
+        format_name: Annotated[
+            str,
+            Field(description="CVAT 导出格式，如 YOLO 1.1、COCO 1.0"),
+        ] = "YOLO 1.1",
+        env_id: Annotated[
+            str,
+            Field(description="导出目标环境 ID（对应 YOLO_SSH_ENVS）"),
+        ] = "default",
+        include_images: Annotated[
+            bool,
+            Field(description="是否在导出包中包含原图"),
+        ] = True,
+    ) -> str:
+        """引导式导出数据集：先选择任务和格式，再导出并给出训练入参。"""
+        return (
+            "请帮我执行一次可追溯的数据集导出流程（CVAT -> 远程训练目录），并严格按步骤确认：\n"
+            "\n"
+            "0. 先读取可选上下文：\n"
+            "   - yolo://cvat/projects（看项目）\n"
+            "   - yolo://cvat/tasks（看任务）\n"
+            "   - yolo://config（确认 datasetsDir、可用环境）\n"
+            "\n"
+            f"1. 目标参数确认：\n"
+            f"   - taskId = {task_id}\n"
+            f"   - datasetName = \"{dataset_name}\"\n"
+            f"   - formatName = \"{format_name}\"\n"
+            f"   - envId = \"{env_id}\"\n"
+            f"   - includeImages = {str(include_images).lower()}\n"
+            "\n"
+            "2. 调用 cvat_get_task(taskId) 和 cvat_analyze_dataset(taskId)，输出任务摘要：\n"
+            "   - 任务名、样本量、类别数、类别分布\n"
+            "   - 导出格式与目标路径风险提示（如格式兼容性、存储占用）\n"
+            "\n"
+            "3. 【强制确认】在调用 cvat_export_dataset 之前：\n"
+            "   - 先给出将要调用的参数 JSON（字段名必须与 tool 入参一致）\n"
+            "   - 明确要求用户回复“确认导出”后再继续\n"
+            "   - 在收到确认前，不要调用 cvat_export_dataset\n"
+            "\n"
+            "4. 收到确认后，调用 cvat_export_dataset 并返回关键结果：\n"
+            "   - dataConfigPath\n"
+            "   - targetDir\n"
+            "   - labels\n"
+            "\n"
+            "5. 导出成功后，给出下一步训练建议，并附上可直接调用 yolo_start_training 的参数模板：\n"
+            f"   model=/workspace/models/yolov8n.pt, dataConfigPath=<上一步返回>, "
+            "epochs=100, imgSize=640, batch=16, learningRate=0.01, envId=<同导出环境>\n"
+        )
+
     @mcp.prompt(name="compare-experiments")
     def compare_experiments_prompt(
         job_ids: Annotated[
