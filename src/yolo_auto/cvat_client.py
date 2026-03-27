@@ -116,8 +116,8 @@ class CVATClient:
     def export_task_dataset(
         self,
         task_id: int,
-        format_name: str = "YOLO 1.1",
-        include_images: bool = True,
+        format_name: str = "Ultralytics YOLO Detection 1.0",
+        include_images: bool = False,
         *,
         status_check_period: int | None = None,
     ) -> bytes:
@@ -136,8 +136,8 @@ class CVATClient:
         *,
         filename: str,
         cloud_storage_id: int,
-        format_name: str = "YOLO 1.1",
-        include_images: bool = True,
+        format_name: str = "Ultralytics YOLO Detection 1.0",
+        include_images: bool = False,
         status_check_period: int | None = None,
     ) -> None:
         with self._build_client() as client:
@@ -154,8 +154,8 @@ class CVATClient:
     def export_project_dataset(
         self,
         project_id: int,
-        format_name: str = "YOLO 1.1",
-        include_images: bool = True,
+        format_name: str = "Ultralytics YOLO Detection 1.0",
+        include_images: bool = False,
     ) -> bytes:
         with self._build_client() as client:
             project = client.projects.retrieve(project_id)

@@ -77,8 +77,22 @@ def register_prompts(mcp: FastMCP) -> None:
         ],
         format_name: Annotated[
             str,
-            Field(description="CVAT 导出格式，如 YOLO 1.1、COCO 1.0"),
-        ] = "YOLO 1.1",
+            Field(
+                description="CVAT 导出格式，如 Ultralytics YOLO Detection 1.0、COCO 1.0"
+            ),
+        ] = "Ultralytics YOLO Detection 1.0",
+        cloud_storage_id: Annotated[
+            int | None,
+            Field(description="可选：CVAT 云存储 ID；不传则使用服务端默认配置"),
+        ] = None,
+        cloud_filename: Annotated[
+            str | None,
+            Field(description="可选：导出到 CVAT 云存储的文件名，如 exports/my-task.zip"),
+        ] = None,
+        status_check_period: Annotated[
+            int | None,
+            Field(description="可选：CVAT 导出队列轮询间隔（秒）"),
+        ] = None,
         env_id: Annotated[
             str,
             Field(description="导出目标环境 ID（对应 YOLO_SSH_ENVS）"),
@@ -86,7 +100,7 @@ def register_prompts(mcp: FastMCP) -> None:
         include_images: Annotated[
             bool,
             Field(description="是否在导出包中包含原图"),
-        ] = True,
+        ] = False,
     ) -> str:
         """引导式导出数据集：先选择任务和格式，再导出并给出训练入参。"""
         return (
@@ -95,12 +109,16 @@ def register_prompts(mcp: FastMCP) -> None:
             "0. 先读取可选上下文：\n"
             "   - yolo://cvat/projects（看项目）\n"
             "   - yolo://cvat/tasks（看任务）\n"
+            "   - 先调用 cvat_list_formats（确认当前实例支持的导出格式）\n"
             "   - yolo://config（确认 datasetsDir、可用环境）\n"
             "\n"
             f"1. 目标参数确认：\n"
             f"   - taskId = {task_id}\n"
             f"   - datasetName = \"{dataset_name}\"\n"
             f"   - formatName = \"{format_name}\"\n"
+            f"   - cloudStorageId = {cloud_storage_id}\n"
+            f"   - cloudFilename = {repr(cloud_filename)}\n"
+            f"   - statusCheckPeriod = {status_check_period}\n"
             f"   - envId = \"{env_id}\"\n"
             f"   - includeImages = {str(include_images).lower()}\n"
             "\n"
@@ -117,6 +135,7 @@ def register_prompts(mcp: FastMCP) -> None:
             "   - dataConfigPath\n"
             "   - targetDir\n"
             "   - labels\n"
+            "   - cloudExport（确认已写入 CVAT 云存储）\n"
             "\n"
             "5. 导出成功后，给出下一步训练建议，并附上可直接调用 yolo_start_training 的参数模板：\n"
             f"   model=/workspace/models/yolov8n.pt, dataConfigPath=<上一步返回>, "

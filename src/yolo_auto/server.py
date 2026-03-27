@@ -233,8 +233,11 @@ def cvat_export_dataset(
     ] = "default",
     formatName: Annotated[
         str,
-        Field(default="YOLO 1.1", description="CVAT 导出格式，默认 YOLO 1.1。"),
-    ] = "YOLO 1.1",
+        Field(
+            default="Ultralytics YOLO Detection 1.0",
+            description="CVAT 导出格式，默认 Ultralytics YOLO Detection 1.0。",
+        ),
+    ] = "Ultralytics YOLO Detection 1.0",
     cloudStorageId: Annotated[
         int | None,
         Field(
@@ -261,8 +264,8 @@ def cvat_export_dataset(
     ] = None,
     includeImages: Annotated[
         bool,
-        Field(default=True, description="是否在导出包中包含原图。"),
-    ] = True,
+        Field(default=False, description="是否在导出包中包含原图，默认 false。"),
+    ] = False,
 ) -> dict[str, Any]:
     """导出 CVAT 数据集并上传至远程训练目录，同时写入 data.yaml。"""
     ssh_client = SSH_BY_ENV.get(envId, SSH)
