@@ -184,6 +184,7 @@ class CVATClient:
                 str(tmp_path),
                 include_images=include_images,
                 status_check_period=status_check_period,
+                location=Location.LOCAL,
             )
             return tmp_path.read_bytes()
         finally:

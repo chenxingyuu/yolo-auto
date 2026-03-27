@@ -262,6 +262,15 @@ def cvat_export_dataset(
             description="可选：CVAT 导出队列轮询间隔（秒）。",
         ),
     ] = None,
+    syncToTrainingDir: Annotated[
+        bool,
+        Field(
+            default=False,
+            description=(
+                "是否同步到训练目录并生成 data.yaml。默认 false（仅导出到 CVAT 云存储）。"
+            ),
+        ),
+    ] = False,
     includeImages: Annotated[
         bool,
         Field(default=False, description="是否在导出包中包含原图，默认 false。"),
@@ -285,6 +294,7 @@ def cvat_export_dataset(
             ),
             cloud_filename=cloudFilename,
             status_check_period=statusCheckPeriod,
+            sync_to_training_dir=syncToTrainingDir,
         )
     )
 

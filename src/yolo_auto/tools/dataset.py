@@ -61,6 +61,7 @@ def export_cvat_dataset(
     cloud_storage_id: int | None = None,
     cloud_filename: str | None = None,
     status_check_period: int | None = None,
+    sync_to_training_dir: bool = False,
 ) -> dict[str, Any]:
     safe_name = _sanitize_dataset_name(dataset_name)
     if not safe_name:
@@ -98,6 +99,18 @@ def export_cvat_dataset(
                 payload={"taskId": task_id, "cloudStorageId": cloud_storage_id},
             )
 
+    # 云端导出优先：如果只需要导出到 CVAT Cloud Storage，可直接返回。
+    if cloud_storage_id is not None and not sync_to_training_dir:
+        return ok(
+            {
+                "taskId": task_id,
+                "datasetName": safe_name,
+                "format": format_name,
+                "cloudExport": cloud_export,
+                "syncedToTrainingDir": False,
+            }
+        )
+
     try:
         dataset_bytes = cvat_client.export_task_dataset(
             task_id,
@@ -108,7 +121,7 @@ def export_cvat_dataset(
     except Exception as exc:
         return err(
             error_code="CVAT_EXPORT_FAILED",
-            message=str(exc),
+            message=f"{type(exc).__name__}: {exc}",
             retryable=True,
             hint="检查 taskId、导出格式和 CVAT 服务连通性",
             payload={"taskId": task_id, "format": format_name},
@@ -181,6 +194,7 @@ def export_cvat_dataset(
             "dataConfigPath": data_yaml_path,
             "labels": labels,
             "cloudExport": cloud_export,
+            "syncedToTrainingDir": True,
         }
     )
 

@@ -93,6 +93,10 @@ def register_prompts(mcp: FastMCP) -> None:
             int | None,
             Field(description="可选：CVAT 导出队列轮询间隔（秒）"),
         ] = None,
+        sync_to_training_dir: Annotated[
+            bool,
+            Field(description="是否同步到训练目录并生成 data.yaml（默认 false）"),
+        ] = False,
         env_id: Annotated[
             str,
             Field(description="导出目标环境 ID（对应 YOLO_SSH_ENVS）"),
@@ -119,6 +123,7 @@ def register_prompts(mcp: FastMCP) -> None:
             f"   - cloudStorageId = {cloud_storage_id}\n"
             f"   - cloudFilename = {repr(cloud_filename)}\n"
             f"   - statusCheckPeriod = {status_check_period}\n"
+            f"   - syncToTrainingDir = {str(sync_to_training_dir).lower()}\n"
             f"   - envId = \"{env_id}\"\n"
             f"   - includeImages = {str(include_images).lower()}\n"
             "\n"
@@ -132,10 +137,9 @@ def register_prompts(mcp: FastMCP) -> None:
             "   - 在收到确认前，不要调用 cvat_export_dataset\n"
             "\n"
             "4. 收到确认后，调用 cvat_export_dataset 并返回关键结果：\n"
-            "   - dataConfigPath\n"
-            "   - targetDir\n"
-            "   - labels\n"
             "   - cloudExport（确认已写入 CVAT 云存储）\n"
+            "   - syncedToTrainingDir\n"
+            "   - 若 syncToTrainingDir=true，再返回 dataConfigPath/targetDir/labels\n"
             "\n"
             "5. 导出成功后，给出下一步训练建议，并附上可直接调用 yolo_start_training 的参数模板：\n"
             f"   model=/workspace/models/yolov8n.pt, dataConfigPath=<上一步返回>, "
