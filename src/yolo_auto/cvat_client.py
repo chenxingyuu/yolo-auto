@@ -6,6 +6,7 @@ from tempfile import NamedTemporaryFile
 from typing import Any
 
 from cvat_sdk.core.client import AccessTokenCredentials, Client
+from cvat_sdk.core.proxies.types import Location
 
 
 @dataclass(frozen=True)
@@ -117,10 +118,38 @@ class CVATClient:
         task_id: int,
         format_name: str = "YOLO 1.1",
         include_images: bool = True,
+        *,
+        status_check_period: int | None = None,
     ) -> bytes:
         with self._build_client() as client:
             task = client.tasks.retrieve(task_id)
-            return self._export_entity_dataset(task, format_name, include_images=include_images)
+            return self._export_entity_dataset(
+                task,
+                format_name,
+                include_images=include_images,
+                status_check_period=status_check_period,
+            )
+
+    def export_task_dataset_to_cloud(
+        self,
+        task_id: int,
+        *,
+        filename: str,
+        cloud_storage_id: int,
+        format_name: str = "YOLO 1.1",
+        include_images: bool = True,
+        status_check_period: int | None = None,
+    ) -> None:
+        with self._build_client() as client:
+            task = client.tasks.retrieve(task_id)
+            task.export_dataset(
+                format_name,
+                filename,
+                include_images=include_images,
+                status_check_period=status_check_period,
+                location=Location.CLOUD_STORAGE,
+                cloud_storage_id=cloud_storage_id,
+            )
 
     def export_project_dataset(
         self,
@@ -145,11 +174,17 @@ class CVATClient:
         format_name: str,
         *,
         include_images: bool,
+        status_check_period: int | None = None,
     ) -> bytes:
         with NamedTemporaryFile(suffix=".zip", delete=False) as tmp_file:
             tmp_path = Path(tmp_file.name)
         try:
-            entity.export_dataset(format_name, str(tmp_path), include_images=include_images)
+            entity.export_dataset(
+                format_name,
+                str(tmp_path),
+                include_images=include_images,
+                status_check_period=status_check_period,
+            )
             return tmp_path.read_bytes()
         finally:
             if tmp_path.exists():

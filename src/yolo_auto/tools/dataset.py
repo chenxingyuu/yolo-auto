@@ -58,6 +58,9 @@ def export_cvat_dataset(
     datasets_dir: str,
     format_name: str = "YOLO 1.1",
     include_images: bool = True,
+    cloud_storage_id: int | None = None,
+    cloud_filename: str | None = None,
+    status_check_period: int | None = None,
 ) -> dict[str, Any]:
     safe_name = _sanitize_dataset_name(dataset_name)
     if not safe_name:
@@ -68,11 +71,39 @@ def export_cvat_dataset(
             hint="datasetName 只能包含字母、数字、短横线和下划线",
         )
 
+    export_token = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
+    cloud_export: dict[str, Any] | None = None
+    if cloud_storage_id is not None:
+        cloud_target = cloud_filename or f"exports/{safe_name}-{export_token}.zip"
+        try:
+            cvat_client.export_task_dataset_to_cloud(
+                task_id,
+                filename=cloud_target,
+                cloud_storage_id=cloud_storage_id,
+                format_name=format_name,
+                include_images=include_images,
+                status_check_period=status_check_period,
+            )
+            cloud_export = {
+                "enabled": True,
+                "cloudStorageId": cloud_storage_id,
+                "filename": cloud_target,
+            }
+        except Exception as exc:
+            return err(
+                error_code="CVAT_CLOUD_EXPORT_FAILED",
+                message=str(exc),
+                retryable=True,
+                hint="检查 cloudStorageId、导出格式和 CVAT Cloud Storage 配置",
+                payload={"taskId": task_id, "cloudStorageId": cloud_storage_id},
+            )
+
     try:
         dataset_bytes = cvat_client.export_task_dataset(
             task_id,
             format_name=format_name,
             include_images=include_images,
+            status_check_period=status_check_period,
         )
     except Exception as exc:
         return err(
@@ -83,7 +114,6 @@ def export_cvat_dataset(
             payload={"taskId": task_id, "format": format_name},
         )
 
-    export_token = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
     remote_zip_path = f"/tmp/cvat-task-{task_id}-{export_token}.zip"
     target_dir = f"{datasets_dir.rstrip('/')}/{safe_name}"
     data_yaml_path = f"{target_dir}/data.yaml"
@@ -150,6 +180,7 @@ def export_cvat_dataset(
             "targetDir": target_dir,
             "dataConfigPath": data_yaml_path,
             "labels": labels,
+            "cloudExport": cloud_export,
         }
     )
 

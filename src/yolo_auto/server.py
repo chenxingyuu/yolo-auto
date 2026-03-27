@@ -235,6 +235,30 @@ def cvat_export_dataset(
         str,
         Field(default="YOLO 1.1", description="CVAT 导出格式，默认 YOLO 1.1。"),
     ] = "YOLO 1.1",
+    cloudStorageId: Annotated[
+        int | None,
+        Field(
+            default=None,
+            description=(
+                "可选：CVAT 云存储 ID。为空时默认使用 CVAT_CLOUD_STORAGE_ID；"
+                "有值时会先导出到 CVAT Cloud Storage。"
+            ),
+        ),
+    ] = None,
+    cloudFilename: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="可选：导出到 CVAT 云存储的文件名（如 exports/my-task.zip）。",
+        ),
+    ] = None,
+    statusCheckPeriod: Annotated[
+        int | None,
+        Field(
+            default=None,
+            description="可选：CVAT 导出队列轮询间隔（秒）。",
+        ),
+    ] = None,
     includeImages: Annotated[
         bool,
         Field(default=True, description="是否在导出包中包含原图。"),
@@ -251,6 +275,13 @@ def cvat_export_dataset(
             datasets_dir=SETTINGS.yolo_datasets_dir,
             format_name=formatName,
             include_images=includeImages,
+            cloud_storage_id=(
+                cloudStorageId
+                if cloudStorageId is not None
+                else SETTINGS.cvat_cloud_storage_id
+            ),
+            cloud_filename=cloudFilename,
+            status_check_period=statusCheckPeriod,
         )
     )
 

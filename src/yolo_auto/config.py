@@ -34,6 +34,7 @@ class Settings:
     cvat_url: str | None
     cvat_token: str | None
     cvat_org_slug: str | None
+    cvat_cloud_storage_id: int | None
 
 
 @dataclass(frozen=True)
@@ -124,6 +125,8 @@ def load_settings() -> Settings:
             "Missing Feishu config: set FEISHU_WEBHOOK_URL "
             "or (FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_CHAT_ID)"
         )
+    cvat_cloud_storage_id_raw = _get_env_optional("CVAT_CLOUD_STORAGE_ID")
+
     return Settings(
         yolo_ssh_host=default_env.host,
         yolo_ssh_port=default_env.port,
@@ -154,5 +157,8 @@ def load_settings() -> Settings:
         cvat_url=_get_env_optional("CVAT_URL"),
         cvat_token=_get_env_optional("CVAT_TOKEN"),
         cvat_org_slug=_get_env_optional("CVAT_ORG_SLUG"),
+        cvat_cloud_storage_id=(
+            int(cvat_cloud_storage_id_raw) if cvat_cloud_storage_id_raw else None
+        ),
     )
 

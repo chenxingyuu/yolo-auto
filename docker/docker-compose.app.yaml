@@ -29,6 +29,7 @@ services:
       CVAT_URL: ${CVAT_URL:-}
       CVAT_TOKEN: ${CVAT_TOKEN:-}
       CVAT_ORG_SLUG: ${CVAT_ORG_SLUG:-}
+      CVAT_CLOUD_STORAGE_ID: ${CVAT_CLOUD_STORAGE_ID:-}
     volumes:
       - state-data:/data/state
       - mlflow-data:/data/mlflow
@@ -57,6 +58,7 @@ services:
       CVAT_URL: ${CVAT_URL:-}
       CVAT_TOKEN: ${CVAT_TOKEN:-}
       CVAT_ORG_SLUG: ${CVAT_ORG_SLUG:-}
+      CVAT_CLOUD_STORAGE_ID: ${CVAT_CLOUD_STORAGE_ID:-}
     volumes:
       - state-data:/data/state
       - mlflow-data:/data/mlflow
