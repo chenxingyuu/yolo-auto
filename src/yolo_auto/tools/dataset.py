@@ -6,6 +6,8 @@ from typing import Any
 
 from yolo_auto.cvat_client import CVATClient
 from yolo_auto.errors import err, ok
+from yolo_auto.ssh_client import SSHClient
+from yolo_auto.tools.sync import sync_dataset
 
 
 def list_cvat_projects(cvat_client: CVATClient) -> dict[str, Any]:
@@ -103,6 +105,83 @@ def export_cvat_dataset(
                 "enabled": True,
                 "cloudStorageId": cloud_storage_id,
                 "filename": cloud_target,
+            },
+        }
+    )
+
+
+def export_and_sync_cvat_dataset(
+    cvat_client: CVATClient,
+    ssh_client: SSHClient,
+    *,
+    task_id: int,
+    dataset_name: str,
+    format_name: str = "Ultralytics YOLO Detection 1.0",
+    include_images: bool = False,
+    cloud_storage_id: int | None = None,
+    cloud_filename: str | None = None,
+    status_check_period: int | None = None,
+    minio_alias: str,
+    minio_bucket: str,
+    minio_prefix: str,
+    datasets_dir: str,
+) -> dict[str, Any]:
+    export_result = export_cvat_dataset(
+        cvat_client,
+        task_id=task_id,
+        dataset_name=dataset_name,
+        format_name=format_name,
+        include_images=include_images,
+        cloud_storage_id=cloud_storage_id,
+        cloud_filename=cloud_filename,
+        status_check_period=status_check_period,
+    )
+    if not export_result.get("ok", False):
+        return export_result
+
+    cloud_export = export_result.get("cloudExport", {})
+    cloud_file = str(cloud_export.get("filename", "")).strip()
+    if not cloud_file:
+        return err(
+            error_code="MISSING_CLOUD_FILENAME",
+            message="cloud export filename missing",
+            retryable=False,
+            hint="请确认 cvat_export_dataset 返回 cloudExport.filename",
+            payload=export_result,
+        )
+
+    sync_result = sync_dataset(
+        ssh_client,
+        minio_alias=minio_alias,
+        minio_bucket=minio_bucket,
+        minio_prefix=minio_prefix,
+        filename=cloud_file,
+        dataset_name=dataset_name,
+        datasets_dir=datasets_dir,
+    )
+    if not sync_result.get("ok", False):
+        return err(
+            error_code="CVAT_EXPORT_SYNC_FAILED",
+            message="dataset exported to cloud but sync to training container failed",
+            retryable=True,
+            hint="检查 MinIO 配置、训练容器 mc/unzip 和远程路径权限",
+            payload={
+                "export": export_result,
+                "sync": sync_result,
+            },
+        )
+
+    return ok(
+        {
+            "taskId": task_id,
+            "datasetName": export_result.get("datasetName"),
+            "format": export_result.get("format"),
+            "cloudExport": cloud_export,
+            "sync": {
+                "source": sync_result.get("source"),
+                "extractedDir": sync_result.get("extractedDir"),
+                "dataConfigPath": sync_result.get("dataConfigPath"),
+                "files": sync_result.get("files", []),
             },
         }
     )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable
 from typing import Any
 
@@ -147,6 +148,56 @@ def register_resources(
                 "datasetsDir": settings.yolo_datasets_dir,
                 "files": files,
                 "count": len(files),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    @mcp.resource(
+        "yolo://minio/datasets",
+        name="minio-datasets",
+        description="MinIO 导出目录中的可用数据集 zip 列表（用于 yolo_sync_dataset）。",
+        mime_type="application/json",
+    )
+    def resource_minio_datasets() -> str:
+        alias = os.getenv("YOLO_MINIO_ALIAS", "minio").strip() or "minio"
+        bucket = os.getenv("YOLO_MINIO_EXPORT_BUCKET", "cvat-export").strip() or "cvat-export"
+        prefix = os.getenv("YOLO_MINIO_EXPORT_PREFIX", "exports").strip() or "exports"
+        remote_dir = "/".join(p.strip("/") for p in (alias, bucket, prefix) if p.strip("/"))
+
+        cmd = f"mc ls {remote_dir}/ --json 2>/dev/null"
+        try:
+            stdout, _, code = ssh_client_default.execute(cmd, timeout=20)
+        except Exception:
+            stdout, code = "", 1
+
+        items: list[dict[str, Any]] = []
+        if code == 0 and stdout.strip():
+            for line in stdout.splitlines():
+                text = line.strip()
+                if not text:
+                    continue
+                try:
+                    obj = json.loads(text)
+                except Exception:
+                    continue
+                key = str(obj.get("key", ""))
+                if not key or key.endswith("/"):
+                    continue
+                items.append(
+                    {
+                        "filename": key,
+                        "size": int(obj.get("size", 0) or 0),
+                        "lastModified": str(obj.get("lastModified", "")),
+                    }
+                )
+
+        items.sort(key=lambda x: x["lastModified"], reverse=True)
+        return json.dumps(
+            {
+                "source": f"{remote_dir}/",
+                "files": items,
+                "count": len(items),
             },
             ensure_ascii=False,
             indent=2,

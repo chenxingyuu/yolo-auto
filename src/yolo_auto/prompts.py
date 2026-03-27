@@ -129,7 +129,14 @@ def register_prompts(mcp: FastMCP) -> None:
             "4. 收到确认后，调用 cvat_export_dataset 并返回关键结果：\n"
             "   - cloudExport（确认已写入 CVAT 云存储）\n"
             "\n"
-            "5. 导出成功后，给出下载/同步建议（如后续需训练，再将导出包解压到训练环境并准备 data.yaml）。\n"
+            "   可选快捷方式：如果目标是立即训练，也可直接调用 cvat_export_and_sync_dataset。\n"
+            "\n"
+            "5. 导出成功后，若目标是立即训练：\n"
+            "   - 先调用 yolo_sync_dataset（filename 用 cloudExport.filename，"
+            "datasetName 可用任务名）\n"
+            "   - 再把返回的 dataConfigPath 用于 yolo_start_training\n"
+            "6. 最后给出一段可直接执行的训练参数建议（model/dataConfigPath/epochs/"
+            "imgSize/batch/lr）。\n"
         )
 
     @mcp.prompt(name="compare-experiments")
