@@ -5,14 +5,13 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
 
-from cvat_sdk.core.client import Client
+from cvat_sdk.core.client import AccessTokenCredentials, Client
 
 
 @dataclass(frozen=True)
 class CVATConfig:
     url: str
-    username: str
-    password: str
+    token: str
     org_slug: str | None = None
 
 
@@ -125,7 +124,7 @@ class CVATClient:
 
     def _build_client(self) -> Client:
         client = Client(self._config.url, check_server_version=False)
-        client.login((self._config.username, self._config.password))
+        client.login(AccessTokenCredentials(token=self._config.token))
         if self._config.org_slug:
             client.organization_slug = self._config.org_slug
         return client

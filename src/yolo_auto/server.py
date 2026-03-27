@@ -122,16 +122,15 @@ def _get_cvat_client() -> CVATClient:
     if CVAT is not None:
         return CVAT
 
-    if not SETTINGS.cvat_url or not SETTINGS.cvat_username or not SETTINGS.cvat_password:
+    if not SETTINGS.cvat_url or not SETTINGS.cvat_token:
         raise ValueError(
-            "CVAT not configured. Please set CVAT_URL, CVAT_USERNAME, CVAT_PASSWORD."
+            "CVAT not configured. Please set CVAT_URL and CVAT_TOKEN."
         )
 
     CVAT = CVATClient(
         CVATConfig(
             url=SETTINGS.cvat_url,
-            username=SETTINGS.cvat_username,
-            password=SETTINGS.cvat_password,
+            token=SETTINGS.cvat_token,
             org_slug=SETTINGS.cvat_org_slug,
         )
     )
@@ -146,7 +145,7 @@ def _with_cvat_client(action: Callable[[CVATClient], dict[str, Any]]) -> dict[st
             error_code="CVAT_NOT_CONFIGURED",
             message=str(exc),
             retryable=False,
-            hint="请先设置 CVAT_URL、CVAT_USERNAME、CVAT_PASSWORD",
+            hint="请先设置 CVAT_URL、CVAT_TOKEN",
         )
     try:
         return action(client)

@@ -350,7 +350,7 @@ def register_resources(
     @mcp.resource(
         "yolo://cvat/projects",
         name="cvat-projects",
-        description="CVAT 项目列表（需配置 CVAT_URL/CVAT_USERNAME/CVAT_PASSWORD）。",
+        description="CVAT 项目列表（需配置 CVAT_URL/CVAT_TOKEN）。",
         mime_type="application/json",
     )
     def resource_cvat_projects() -> str:
@@ -360,7 +360,7 @@ def register_resources(
                 {
                     "ok": False,
                     "error": "CVAT is not configured",
-                    "hint": "请设置 CVAT_URL、CVAT_USERNAME、CVAT_PASSWORD",
+                    "hint": "请设置 CVAT_URL、CVAT_TOKEN",
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -382,7 +382,7 @@ def register_resources(
     @mcp.resource(
         "yolo://cvat/tasks",
         name="cvat-tasks",
-        description="CVAT 任务列表（需配置 CVAT_URL/CVAT_USERNAME/CVAT_PASSWORD）。",
+        description="CVAT 任务列表（需配置 CVAT_URL/CVAT_TOKEN）。",
         mime_type="application/json",
     )
     def resource_cvat_tasks() -> str:
@@ -392,7 +392,7 @@ def register_resources(
                 {
                     "ok": False,
                     "error": "CVAT is not configured",
-                    "hint": "请设置 CVAT_URL、CVAT_USERNAME、CVAT_PASSWORD",
+                    "hint": "请设置 CVAT_URL、CVAT_TOKEN",
                 },
                 ensure_ascii=False,
                 indent=2,
