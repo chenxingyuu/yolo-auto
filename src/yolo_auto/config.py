@@ -136,7 +136,7 @@ def load_settings() -> Settings:
             0, int(_get_env("FEISHU_REPORT_EVERY_N_EPOCHS", "5"))
         ),
         primary_metric_key=_get_env("YOLO_PRIMARY_METRIC", "map5095"),
-        mlflow_tracking_uri=_get_env("MLFLOW_TRACKING_URI", "./mlruns"),
+        mlflow_tracking_uri=_get_env("MLFLOW_TRACKING_URI", "sqlite:////data/mlflow/mlflow.db"),
         mlflow_experiment_name=_get_env("MLFLOW_EXPERIMENT_NAME", "yolo-auto"),
         mlflow_external_url=_get_env_optional("MLFLOW_EXTERNAL_URL"),
         yolo_work_dir=_get_env("YOLO_WORK_DIR", "/workspace/yolo-auto"),
