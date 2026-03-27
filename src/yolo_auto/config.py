@@ -31,6 +31,10 @@ class Settings:
     yolo_state_file: str
     watch_poll_interval_seconds: int
     watch_lock_file: str
+    cvat_url: str | None
+    cvat_username: str | None
+    cvat_password: str | None
+    cvat_org_slug: str | None
 
 
 @dataclass(frozen=True)
@@ -148,5 +152,9 @@ def load_settings() -> Settings:
             5, int(_get_env("YOLO_WATCH_POLL_INTERVAL_SECONDS", "30"))
         ),
         watch_lock_file=_get_env("YOLO_WATCH_LOCK_FILE", ".state/watch.lock"),
+        cvat_url=_get_env_optional("CVAT_URL"),
+        cvat_username=_get_env_optional("CVAT_USERNAME"),
+        cvat_password=_get_env_optional("CVAT_PASSWORD"),
+        cvat_org_slug=_get_env_optional("CVAT_ORG_SLUG"),
     )
 

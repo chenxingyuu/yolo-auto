@@ -61,6 +61,15 @@ class SSHClient:
         finally:
             client.close()
 
+    def upload_bytes(self, data: bytes, remote_path: str) -> None:
+        client = self._connect()
+        try:
+            sftp = client.open_sftp()
+            with sftp.file(remote_path, "wb") as f:
+                f.write(data)
+        finally:
+            client.close()
+
     def file_exists(self, path: str) -> bool:
         _, _, exit_code = self.execute(f"test -f {path}")
         return exit_code == 0

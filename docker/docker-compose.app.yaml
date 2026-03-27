@@ -24,7 +24,12 @@ services:
       # You should override these via an env file or environment:
       # - FEISHU_WEBHOOK_URL
       # - YOLO_SSH_ENVS or YOLO_SSH_HOST/PORT/USER/KEY_PATH
+      # - CVAT_URL/CVAT_USERNAME/CVAT_PASSWORD (optional)
       YOLO_SSH_KEY_PATH: /run/secrets/yolo_ssh_key
+      CVAT_URL: ${CVAT_URL:-}
+      CVAT_USERNAME: ${CVAT_USERNAME:-}
+      CVAT_PASSWORD: ${CVAT_PASSWORD:-}
+      CVAT_ORG_SLUG: ${CVAT_ORG_SLUG:-}
     volumes:
       - state-data:/data/state
       - mlflow-data:/data/mlflow
@@ -50,6 +55,10 @@ services:
       MLFLOW_EXPERIMENT_NAME: yolo-auto
 
       YOLO_SSH_KEY_PATH: /run/secrets/yolo_ssh_key
+      CVAT_URL: ${CVAT_URL:-}
+      CVAT_USERNAME: ${CVAT_USERNAME:-}
+      CVAT_PASSWORD: ${CVAT_PASSWORD:-}
+      CVAT_ORG_SLUG: ${CVAT_ORG_SLUG:-}
     volumes:
       - state-data:/data/state
       - mlflow-data:/data/mlflow

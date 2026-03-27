@@ -5,6 +5,7 @@ description = "YOLO Auto MCP Workflow"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "cvat-sdk>=2.29.0",
     "httpx>=0.28.1",
     "mcp>=1.6.0",
     "mlflow==3.10.1",
