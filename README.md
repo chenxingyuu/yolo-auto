@@ -133,7 +133,7 @@ cp .env.example .env
 uv run ruff check .
 ```
 
-### 3.2 验证 MCP 注册数量（17 tools + 7 prompts + 12 resources）
+### 3.2 验证 MCP 注册数量（21 tools + 7 prompts + 12 resources）
 
 ```bash
 YOLO_SSH_HOST=127.0.0.1 \
@@ -156,7 +156,7 @@ print(f'tools={t} prompts={p} resources={r}')
 "
 ```
 
-预期：`tools=17 prompts=7 resources=12`。
+预期：`tools=21 prompts=7 resources=12`。
 
 ## 4. MCP 工具一览
 
@@ -168,8 +168,12 @@ print(f'tools={t} prompts={p} resources={r}')
 | `cvat_list_formats` | 列出 CVAT 支持的导入/导出格式 |
 | `cvat_get_task` | 获取单个 CVAT 任务详情 |
 | `cvat_analyze_dataset` | 统计任务样本量、类别分布等标注信息 |
-| `cvat_export_dataset` | 导出 CVAT 数据集到 Cloud Storage |
-| `cvat_export_and_sync_dataset` | 一键导出到 MinIO 并同步到训练容器，返回可训练 `dataConfigPath` |
+| `cvat_export_dataset` | 提交单个任务云导出（立即返回 `rqId`，不阻塞；CVAT 在 `/api/requests` 队列异步生成） |
+| `cvat_export_project_dataset` | 提交整项目云导出（同上，返回 `rqId`） |
+| `cvat_get_request` | 按 `rqId` 查询 CVAT 请求队列状态（`started`/`failed`/`finished` 等）及 `result_url` |
+| `cvat_list_requests` | 分页列出 CVAT 请求队列（可按项目/任务/状态过滤） |
+| `cvat_export_and_sync_dataset` | 单任务一键导出到 MinIO 并同步到训练容器，返回可训练 `dataConfigPath` |
+| `cvat_export_and_sync_project_dataset` | 整项目一键导出并同步到训练容器，返回可训练 `dataConfigPath` |
 | `yolo_sync_dataset` | 从 MinIO 同步导出的 zip 到训练容器并返回 `dataConfigPath` |
 | `yolo_start_training` | 启动训练（异步），写入状态 |
 | `yolo_get_status` | 拉取 `results.csv`、更新 MLflow、飞书里程碑/完成通知 |

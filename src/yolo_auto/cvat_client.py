@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
 
+from cvat_sdk.api_client.model_utils import to_json
 from cvat_sdk.core.client import AccessTokenCredentials, Client
+from cvat_sdk.core.helpers import expect_status, make_request_headers
 from cvat_sdk.core.proxies.types import Location
 
 
@@ -138,17 +141,18 @@ class CVATClient:
         cloud_storage_id: int,
         format_name: str = "Ultralytics YOLO Detection 1.0",
         include_images: bool = False,
-        status_check_period: int | None = None,
-    ) -> None:
+    ) -> str:
+        """发起云导出（仅 POST，返回 rq_id）；不阻塞，请用 get_request / list_requests 轮询。"""
         with self._build_client() as client:
             task = client.tasks.retrieve(task_id)
-            task.export_dataset(
-                format_name,
-                filename,
-                include_images=include_images,
-                status_check_period=status_check_period,
-                location=Location.CLOUD_STORAGE,
+            return self._initiate_cloud_dataset_export(
+                client,
+                task.api.create_dataset_export_endpoint,
+                int(task.id),
+                filename=filename,
                 cloud_storage_id=cloud_storage_id,
+                format_name=format_name,
+                include_images=include_images,
             )
 
     def export_project_dataset(
@@ -160,6 +164,74 @@ class CVATClient:
         with self._build_client() as client:
             project = client.projects.retrieve(project_id)
             return self._export_entity_dataset(project, format_name, include_images=include_images)
+
+    def export_project_dataset_to_cloud(
+        self,
+        project_id: int,
+        *,
+        filename: str,
+        cloud_storage_id: int,
+        format_name: str = "Ultralytics YOLO Detection 1.0",
+        include_images: bool = False,
+    ) -> str:
+        """发起项目云导出（仅 POST，返回 rq_id）；不阻塞等待队列。"""
+        with self._build_client() as client:
+            project = client.projects.retrieve(project_id)
+            return self._initiate_cloud_dataset_export(
+                client,
+                project.api.create_dataset_export_endpoint,
+                int(project.id),
+                filename=filename,
+                cloud_storage_id=cloud_storage_id,
+                format_name=format_name,
+                include_images=include_images,
+            )
+
+    def get_request(self, rq_id: str) -> dict[str, Any]:
+        """GET /api/requests/{id}，返回与 CVAT 队列一致的结构（status/progress/message 等）。"""
+        with self._build_client() as client:
+            request, _ = client.api_client.requests_api.retrieve(rq_id)
+            return to_json(request)
+
+    def list_requests(
+        self,
+        *,
+        project_id: int | None = None,
+        task_id: int | None = None,
+        status: str | None = None,
+        page: int | None = None,
+        page_size: int | None = None,
+        target: str | None = None,
+        subresource: str | None = None,
+        action: str | None = None,
+    ) -> dict[str, Any]:
+        """GET /api/requests，用于浏览导出队列（可过滤 project_id、task_id、status 等）。"""
+        params: dict[str, Any] = {}
+        if project_id is not None:
+            params["project_id"] = project_id
+        if task_id is not None:
+            params["task_id"] = task_id
+        if status is not None:
+            params["status"] = status
+        if page is not None:
+            params["page"] = page
+        if page_size is not None:
+            params["page_size"] = page_size
+        if target is not None:
+            params["target"] = target
+        if subresource is not None:
+            params["subresource"] = subresource
+        if action is not None:
+            params["action"] = action
+
+        with self._build_client() as client:
+            data, _ = client.api_client.requests_api.list(**params)
+            return {
+                "count": data.count,
+                "next": data.next,
+                "previous": data.previous,
+                "results": [to_json(r) for r in data.results],
+            }
 
     def _build_client(self) -> Client:
         client = Client(self._config.url, check_server_version=False)
@@ -190,6 +262,42 @@ class CVATClient:
         finally:
             if tmp_path.exists():
                 tmp_path.unlink()
+
+    @staticmethod
+    def _initiate_cloud_dataset_export(
+        client: Client,
+        endpoint: Any,
+        entity_id: int,
+        *,
+        filename: str,
+        cloud_storage_id: int,
+        format_name: str,
+        include_images: bool,
+    ) -> str:
+        query_params: dict[str, Any] = {
+            "location": Location.CLOUD_STORAGE,
+            "cloud_storage_id": cloud_storage_id,
+            "filename": str(filename),
+            "format": format_name,
+            "save_images": include_images,
+        }
+        url = client.api_map.make_endpoint_url(
+            endpoint.path, kwsub={"id": entity_id}, query_params=query_params
+        )
+        response = client.api_client.rest_client.request(
+            method=endpoint.settings["http_method"],
+            url=url,
+            headers=make_request_headers(client.api_client),
+        )
+        expect_status(202, response)
+        raw = response.data
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        payload = json.loads(raw)
+        rq_id = payload.get("rq_id")
+        if not rq_id:
+            raise ValueError("CVAT export response missing rq_id")
+        return str(rq_id)
 
     @staticmethod
     def _project_summary(project: Any) -> dict[str, Any]:

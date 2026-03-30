@@ -104,7 +104,11 @@ def test_sync_dataset_accepts_exports_prefixed_filename(mock_ssh: MagicMock) -> 
 
 def test_export_and_sync_success(mock_ssh: MagicMock) -> None:
     cvat_client = MagicMock()
-    cvat_client.export_task_dataset_to_cloud.return_value = None
+    cvat_client.export_task_dataset_to_cloud.return_value = "rq-t"
+    cvat_client.get_request.side_effect = [
+        {"status": {"value": "queued"}},
+        {"status": {"value": "finished"}},
+    ]
     mock_ssh.execute.side_effect = [
         ("", "", 0),  # command -v mc
         ("", "", 0),  # command -v unzip
@@ -121,6 +125,8 @@ def test_export_and_sync_success(mock_ssh: MagicMock) -> None:
         dataset_name="task8_sync",
         include_images=True,
         cloud_storage_id=1,
+        poll_seconds=0.01,
+        max_wait_seconds=30.0,
         minio_alias="minio",
         minio_bucket="cvat-export",
         minio_prefix="exports",

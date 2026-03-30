@@ -95,7 +95,8 @@ def sync_dataset(
         f"unzip -o {shlex.quote(tmp_zip)} -d {shlex.quote(extracted_dir)} >/dev/null && "
         f"rm -f {shlex.quote(tmp_zip)}"
     )
-    _, stderr_sync, sync_code = ssh_client.execute(sync_cmd, timeout=300)
+    # CVAT 整项目含原图时 mc cp + unzip 常超过 5 分钟
+    _, stderr_sync, sync_code = ssh_client.execute(sync_cmd, timeout=7200)
     if sync_code != 0:
         return err(
             error_code="SYNC_DATASET_FAILED",

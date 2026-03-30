@@ -29,8 +29,14 @@ def _ssh_for_record(
 
 def _epoch_hint(record: JobRecord, ssh_clients_by_env: dict[str, SSHClient]) -> dict[str, Any]:
     path = record.paths.get("metricsPath", "")
+    if not path:
+        return {}
     ssh_client = _ssh_for_record(record, ssh_clients_by_env)
-    content, _, code = ssh_client.execute(f"cat {path}")
+    try:
+        content, _, code = ssh_client.execute(f"cat {path}")
+    except Exception:
+        # list_jobs 是轻量查看接口：SSH 不可用时也应尽量返回本地状态。
+        return {}
     if code != 0 or not content.strip():
         return {}
     rows = list(csv.DictReader(StringIO(content)))
