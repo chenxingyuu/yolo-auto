@@ -10,15 +10,9 @@ services:
       - "2222:2222"
     gpus: all
     volumes:
-      - datasets:/workspace/datasets
-      - jobs:/workspace/jobs
-      - models:/workspace/models
+      - /data/yolo-datasets:/workspace/datasets
+      - /data/yolo-jobs:/workspace/jobs
+      - /data/yolo-models:/workspace/models
       - /root/.ssh/authorized_keys:/root/.ssh/authorized_keys:ro
+      - ./mc-config.json:/root/.mc/config.json:ro
 
-volumes:
-  jobs:
-    driver: local
-  datasets:
-    driver: local
-  models:
-    driver: local

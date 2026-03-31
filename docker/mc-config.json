@@ -1,0 +1,12 @@
+{
+    "version": "10",
+    "aliases": {
+      "minio": {
+        "url": "http://192.168.3.145:9200",
+        "accessKey": "IOdwFqyreSUr1ukaRBY4",
+        "secretKey": "Ralhvg7d2DXwowBiS19B1CIHq3TgS4tMKktUegnq",
+        "api": "s3v4",
+        "path": "auto"
+      }
+    }
+}
