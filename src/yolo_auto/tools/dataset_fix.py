@@ -110,6 +110,17 @@ for split in ("train", "val", "test"):
     if removed > 0:
         add_change("split_deduplicate", p, f"removed duplicates: {{removed}}")
 
+raw_path = str(data.get("path", ".")).strip() if data.get("path") is not None else "."
+if raw_path in ("", ".", "./"):
+    normalized_root = str(cfg_path.parent.resolve())
+    if data.get("path") != normalized_root:
+        data["path"] = normalized_root
+        add_change(
+            "normalize_dataset_root_path",
+            cfg_path,
+            "set path to absolute dataset root",
+        )
+
 if not data.get("val"):
     train_lines = split_results["train"]["lines"]
     if train_lines:
