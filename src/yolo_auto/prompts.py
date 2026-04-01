@@ -24,7 +24,7 @@ def register_prompts(mcp: FastMCP) -> None:
             Field(description="训练轮数"),
         ] = "100",
     ) -> str:
-        """一句话启动训练：环境检查 → 数据自检 → 启动 → 首次状态确认。"""
+        """一句话启动训练：环境检查 → 自检/修复闭环 → 启动 → 首次状态确认。"""
         return (
             f"请帮我完成以下 YOLO 训练流程（按顺序执行，每步失败立即告知原因与修复建议）：\n"
             f"\n"
@@ -36,7 +36,13 @@ def register_prompts(mcp: FastMCP) -> None:
             f"dataConfigPath=\"{dataset}\"）确认远程环境就绪\n"
             f"\n"
             f"2. 调用 yolo_check_dataset（dataConfigPath=\"{dataset}\"）做全量数据集自检；"
-            f"如返回 ok=false，先修复后再继续\n"
+            f"如返回 ok=false，按以下闭环执行：\n"
+            f"   - 先调用 yolo_fix_dataset（dataConfigPath=\"{dataset}\", "
+            f"dryRun=true）输出修复计划\n"
+            f"   - 向用户展示 plannedChanges/riskItems 并请求确认\n"
+            f"   - 用户确认后调用 yolo_fix_dataset（dataConfigPath=\"{dataset}\", "
+            f"dryRun=false, apply=true）执行修复\n"
+            f"   - 修复完成后再次调用 yolo_check_dataset，直到 ok=true 才允许启动训练\n"
             f"\n"
             f"3. 【强制确认】在调用 yolo_start_training 之前：\n"
             f"   - 先把将要启动的配置完整列出来：\n"
@@ -194,13 +200,15 @@ def register_prompts(mcp: FastMCP) -> None:
             f"数据集：{dataset}\n"
             f"\n"
             f"1. 调用 yolo_setup_env 确认环境\n"
-            f"2. 调用 yolo_list_jobs 查看历史实验，避免重复参数\n"
-            f"3. 根据目标「{goal}」设计搜索空间：\n"
+            f"2. 调用 yolo_check_dataset 做数据集全量自检；若失败按 "
+            f"yolo_fix_dataset(dryRun->确认->apply->re-check) 闭环修复\n"
+            f"3. 调用 yolo_list_jobs 查看历史实验，避免重复参数\n"
+            f"4. 根据目标「{goal}」设计搜索空间：\n"
             f"   - 追求精度 → imgSize [640,1280], batch [8,16], lr [0.001,0.01]\n"
             f"   - 追求速度 → imgSize [320,640], batch [32,64], lr [0.01,0.02]\n"
             f"   - 兼顾平衡 → imgSize [640], batch [16,32], lr [0.005,0.01,0.02]\n"
         f"\n"
-        f"4. 【强制确认】在调用 yolo_auto_tune 之前：\n"
+        f"5. 【强制确认】在调用 yolo_auto_tune 之前：\n"
         f"   - 先总结你将要执行的调参计划（必须具体可核对）：\n"
         f"     * baseJobId（你将生成的 trial 前缀）\n"
         f"     * model = \"{model}\"\n"
@@ -212,8 +220,8 @@ def register_prompts(mcp: FastMCP) -> None:
         f"   - 明确要求用户回复“确认/开始”后再继续\n"
         f"   - 在收到用户确认前，不要调用 yolo_auto_tune\n"
         f"\n"
-        f"5. 收到用户确认后，调用 yolo_auto_tune（epochs=30、maxTrials<=6）执行调参\n"
-        f"6. 输出报告：最佳参数、各 trial 对比、是否建议用最佳参数跑完整 epoch\n"
+        f"6. 收到用户确认后，调用 yolo_auto_tune（epochs=30、maxTrials<=6）执行调参\n"
+        f"7. 输出报告：最佳参数、各 trial 对比、是否建议用最佳参数跑完整 epoch\n"
         )
 
     @mcp.prompt(name="diagnose")

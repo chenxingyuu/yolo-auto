@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shlex
+from pathlib import PurePosixPath
 from typing import Any
 
 from yolo_auto.errors import err, ok
@@ -81,11 +82,42 @@ def _parse_dataset_summary(
         return None, "invalid dataset summary output"
 
 
+def _resolve_model_path(
+    ssh_client: SSHClient,
+    *,
+    model: str,
+    work_dir: str,
+    models_dir: str,
+) -> tuple[str | None, bool, list[str], str | None]:
+    model_abs_path = _resolve_remote_path(model, work_dir)
+    model_q = shlex.quote(model_abs_path)
+    _, _, exists_code = ssh_client.execute(f"test -f {model_q}")
+    if exists_code == 0:
+        return model_abs_path, False, [model_abs_path], None
+
+    basename = PurePosixPath(model).name
+    if not basename:
+        return None, False, [], "MODEL_NOT_FOUND"
+    search_cmd = (
+        f"find {shlex.quote(models_dir)} -type f -name {shlex.quote(basename)} -print | head -100"
+    )
+    out, _, search_code = ssh_client.execute(search_cmd)
+    if search_code != 0:
+        return None, False, [], "MODEL_NOT_FOUND"
+    candidates = [line.strip() for line in out.splitlines() if line.strip()]
+    if len(candidates) == 1:
+        return candidates[0], True, candidates, None
+    if len(candidates) > 1:
+        return None, False, candidates, "MODEL_AMBIGUOUS"
+    return None, False, [], "MODEL_NOT_FOUND"
+
+
 def setup_env(
     ssh_client: SSHClient,
     work_dir: str,
     data_config_path: str,
     model: str,
+    models_dir: str = "/workspace/models",
 ) -> dict[str, object]:
     version_cmd = "python -c 'import ultralytics; print(ultralytics.__version__)'"
     stdout_text, stderr_text, exit_code = ssh_client.execute(version_cmd)
@@ -100,28 +132,49 @@ def setup_env(
 
     work_dir_q = shlex.quote(work_dir)
     data_config_abs_path = _resolve_remote_path(data_config_path, work_dir)
-    model_abs_path = _resolve_remote_path(model, work_dir)
+    model_abs_path, model_auto_fixed, model_candidates, model_err = _resolve_model_path(
+        ssh_client,
+        model=model,
+        work_dir=work_dir,
+        models_dir=models_dir,
+    )
+    if model_err == "MODEL_AMBIGUOUS":
+        return err(
+            error_code="MODEL_AMBIGUOUS",
+            message="multiple model candidates found in models directory",
+            retryable=False,
+            hint="请传入更精确的模型路径，或在候选中选择一个",
+            payload={
+                "reachable": True,
+                "workDir": work_dir,
+                "yoloVersion": stdout_text.strip(),
+                "validModel": False,
+                "modelPath": _resolve_remote_path(model, work_dir),
+                "searchedDir": models_dir,
+                "candidates": model_candidates,
+            },
+        )
+    if model_abs_path is None:
+        return err(
+            error_code="MODEL_NOT_FOUND",
+            message=f"model not found: {_resolve_remote_path(model, work_dir)}",
+            retryable=False,
+            hint="确认 model 路径存在，或将同名模型放到 YOLO_MODELS_DIR",
+            payload={
+                "reachable": True,
+                "workDir": work_dir,
+                "yoloVersion": stdout_text.strip(),
+                "validModel": False,
+                "modelPath": _resolve_remote_path(model, work_dir),
+                "searchedDir": models_dir,
+                "candidates": model_candidates,
+            },
+        )
     data_q = shlex.quote(data_config_abs_path)
     model_q = shlex.quote(model_abs_path)
     check_cmd = f"test -d {work_dir_q} && test -f {data_q} && test -f {model_q}"
     _, check_err, check_code = ssh_client.execute(check_cmd)
     if check_code != 0:
-        model_exists_cmd = f"test -f {model_q}"
-        _, _, model_exists_code = ssh_client.execute(model_exists_cmd)
-        if model_exists_code != 0:
-            return err(
-                error_code="MODEL_NOT_FOUND",
-                message=f"model not found: {model_abs_path}",
-                retryable=False,
-                hint="确认 model 路径在远程容器内存在（绝对路径或相对 YOLO_WORK_DIR）",
-                payload={
-                    "reachable": True,
-                    "workDir": work_dir,
-                    "yoloVersion": stdout_text.strip(),
-                    "validModel": False,
-                    "modelPath": model_abs_path,
-                },
-            )
         return err(
             error_code="DATA_CONFIG_INVALID",
             message=check_err.strip() or "workDir or dataConfigPath missing",
@@ -135,6 +188,8 @@ def setup_env(
                 "validModel": True,
                 "dataConfigPath": data_config_abs_path,
                 "modelPath": model_abs_path,
+                "resolvedModelPath": model_abs_path,
+                "modelAutoFixed": model_auto_fixed,
             },
         )
 
@@ -155,6 +210,8 @@ def setup_env(
                 "yoloVersion": stdout_text.strip(),
                 "validModel": True,
                 "modelPath": model_abs_path,
+                "resolvedModelPath": model_abs_path,
+                "modelAutoFixed": model_auto_fixed,
                 "validData": False,
                 "dataConfigPath": data_config_abs_path,
             },
@@ -213,6 +270,9 @@ def setup_env(
             "validData": True,
             "validModel": True,
             "modelPath": model_abs_path,
+            "resolvedModelPath": model_abs_path,
+            "modelAutoFixed": model_auto_fixed,
+            "modelCandidates": model_candidates,
             "dataConfigPath": data_config_abs_path,
             "datasetChecks": dataset_summary,
             "warnings": warnings,

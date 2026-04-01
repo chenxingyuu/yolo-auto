@@ -162,7 +162,7 @@ print(f'tools={t} prompts={p} resources={r}')
 
 | 工具名 | 作用 |
 |--------|------|
-| `yolo_setup_env` | 检查远程环境、模型文件存在性与数据集 YAML（train/val 必填，test 可选，类目配置一致性） |
+| `yolo_setup_env` | 检查远程环境、模型文件存在性与数据集 YAML（模型缺失时会在 `YOLO_MODELS_DIR` 同名查找；train/val 必填，test 可选，类目配置一致性） |
 | `yolo_check_dataset` | 全量检查数据集文件与标注合法性（缺图/缺标签/坏标签/类别越界），严格模式下任一错误即失败 |
 | `yolo_fix_dataset` | 自动修复数据集问题（默认 dry-run 预览，apply 才落盘并生成备份）；支持 YAML/split/可确定标签格式修复 |
 | `cvat_list_projects` | 列出 CVAT 项目 |
