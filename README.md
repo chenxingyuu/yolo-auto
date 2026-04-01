@@ -4,7 +4,7 @@
 
 ## 这个项目能做什么
 
-- 在 AI 对话里触发训练：`setup_env` → `start_training` → `get_status` →（可选）`auto_tune`
+- 在 AI 对话里触发训练：`setup_env` → `check_dataset` →（可选 `fix_dataset`）→ `start_training` → `get_status` →（可选）`auto_tune`
 - 自动记录实验到 MLflow（参数、指标）
 - 飞书通知：启动、**按 epoch 里程碑**、完成/失败/停止、调参 trial 结果
 - **V3**：`list_jobs` / `get_job` 在对话中查看本地任务列表；`auto_tune` 返回与 MLflow `compare_runs` 的对照；可选后台 `yolo-auto-watch` 轮询
@@ -133,7 +133,7 @@ cp .env.example .env
 uv run ruff check .
 ```
 
-### 3.2 验证 MCP 注册数量（21 tools + 7 prompts + 12 resources）
+### 3.2 验证 MCP 注册数量（23 tools + 7 prompts + 12 resources）
 
 ```bash
 YOLO_SSH_HOST=127.0.0.1 \
@@ -156,13 +156,15 @@ print(f'tools={t} prompts={p} resources={r}')
 "
 ```
 
-预期：`tools=21 prompts=7 resources=12`。
+预期：`tools=23 prompts=7 resources=12`。
 
 ## 4. MCP 工具一览
 
 | 工具名 | 作用 |
 |--------|------|
-| `yolo_setup_env` | 检查远程环境与数据配置 |
+| `yolo_setup_env` | 检查远程环境、模型文件存在性与数据集 YAML（train/val 必填，test 可选，类目配置一致性） |
+| `yolo_check_dataset` | 全量检查数据集文件与标注合法性（缺图/缺标签/坏标签/类别越界），严格模式下任一错误即失败 |
+| `yolo_fix_dataset` | 自动修复数据集问题（默认 dry-run 预览，apply 才落盘并生成备份）；支持 YAML/split/可确定标签格式修复 |
 | `cvat_list_projects` | 列出 CVAT 项目 |
 | `cvat_list_tasks` | 列出 CVAT 任务（可按项目过滤） |
 | `cvat_list_formats` | 列出 CVAT 支持的导入/导出格式 |

@@ -24,7 +24,7 @@ def register_prompts(mcp: FastMCP) -> None:
             Field(description="训练轮数"),
         ] = "100",
     ) -> str:
-        """一句话启动训练：环境检查 → 启动 → 首次状态确认。"""
+        """一句话启动训练：环境检查 → 数据自检 → 启动 → 首次状态确认。"""
         return (
             f"请帮我完成以下 YOLO 训练流程（按顺序执行，每步失败立即告知原因与修复建议）：\n"
             f"\n"
@@ -32,9 +32,13 @@ def register_prompts(mcp: FastMCP) -> None:
             f"   - 数据集 YAML 通常在 /workspace/datasets（例：/workspace/datasets/coco.yaml）\n"
             f"   - 基础模型权重通常在 /workspace/models（例：/workspace/models/yolo26n.pt）\n"
             f"\n"
-            f"1. 调用 yolo_setup_env（dataConfigPath=\"{dataset}\"）确认远程环境就绪\n"
+            f"1. 调用 yolo_setup_env（model=\"{model}\", "
+            f"dataConfigPath=\"{dataset}\"）确认远程环境就绪\n"
             f"\n"
-            f"2. 【强制确认】在调用 yolo_start_training 之前：\n"
+            f"2. 调用 yolo_check_dataset（dataConfigPath=\"{dataset}\"）做全量数据集自检；"
+            f"如返回 ok=false，先修复后再继续\n"
+            f"\n"
+            f"3. 【强制确认】在调用 yolo_start_training 之前：\n"
             f"   - 先把将要启动的配置完整列出来：\n"
             f"     * model = \"{model}\"\n"
             f"     * dataConfigPath = \"{dataset}\"\n"
@@ -46,9 +50,9 @@ def register_prompts(mcp: FastMCP) -> None:
             f"   - 明确要求用户回复“确认/开始”后再继续\n"
             f"   - 在收到用户确认前，不要调用 yolo_start_training\n"
             f"\n"
-            f"3. 收到用户确认后，调用 yolo_start_training 启动训练（参数同上）\n"
-            f"4. 启动成功后等待约 30 秒，调用 yolo_get_status 确认训练已开始运行\n"
-            f"5. 用一段简洁摘要回复：任务 ID、MLflow runId、关键参数、飞书是否已通知\n"
+            f"4. 收到用户确认后，调用 yolo_start_training 启动训练（参数同上）\n"
+            f"5. 启动成功后等待约 30 秒，调用 yolo_get_status 确认训练已开始运行\n"
+            f"6. 用一段简洁摘要回复：任务 ID、MLflow runId、关键参数、飞书是否已通知\n"
         )
 
     @mcp.prompt(name="dashboard")
