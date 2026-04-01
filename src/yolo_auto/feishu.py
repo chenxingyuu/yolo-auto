@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any, Literal
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -134,11 +137,13 @@ class FeishuNotifier:
 
     def send_schema_card_with_message_id(self, *, card: dict[str, Any]) -> str | None:
         if not self._app_bot:
+            logger.warning("Feishu app bot is not configured; skip schema card send")
             return None
         return self._send_card_via_app_bot_with_message_id(card)
 
     def update_schema_card(self, *, message_id: str, card: dict[str, Any]) -> bool:
         if not self._app_bot:
+            logger.warning("Feishu app bot is not configured; skip schema card update")
             return False
         return self._update_card_via_app_bot(message_id=message_id, card=card)
 
@@ -212,8 +217,9 @@ class FeishuNotifier:
                 ok_sent = self._send_card_via_app_bot(card)
                 if ok_sent:
                     return True
+                logger.warning("Feishu app bot returned unsuccessful send result")
             except Exception:
-                pass
+                logger.exception("Feishu app bot send failed")
         if self._webhook_url:
             return self._send_card_via_webhook(card)
         return False
@@ -301,13 +307,29 @@ class FeishuNotifier:
                     response.raise_for_status()
                     data = response.json()
                     if isinstance(data, dict):
+                        code = int(data.get("code", 0) or 0)
+                        if code != 0:
+                            logger.warning(
+                                "Feishu API business error: method=%s url=%s code=%s msg=%s",
+                                method,
+                                url,
+                                code,
+                                str(data.get("msg", "")),
+                            )
+                            return None
                         return dict(data.get("data") or {})
                     return {}
             except Exception as exc:
                 last_exc = exc
                 if attempt < max_attempts - 1:
                     time.sleep(0.4 * (2**attempt))
-        _ = last_exc
+        if last_exc is not None:
+            logger.warning(
+                "Feishu HTTP request failed after retries: method=%s url=%s err=%s",
+                method,
+                url,
+                repr(last_exc),
+            )
         return None
 
     def _get_tenant_access_token(self) -> str:

@@ -87,7 +87,6 @@ def _build_training_schema_card(
             "img_key": top_img_key,
             "alt": {"tag": "plain_text", "content": "training cover"},
             "scale_type": "fit_horizontal",
-            "size": "stretch",
         }
         if top_img_fallback_key:
             image_element["fallback_img_key"] = top_img_fallback_key
