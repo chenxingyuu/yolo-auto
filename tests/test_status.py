@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from unittest.mock import MagicMock
 
 from yolo_auto.models import JobRecord, JobStatus
@@ -9,6 +10,12 @@ CSV_CONTENT = (
     "epoch,train/box_loss,metrics/mAP50(B),metrics/mAP50-95(B),metrics/precision(B),metrics/recall(B)\n"
     "0,0.1,0.2,0.3,0.4,0.5\n"
     "1,0.12,0.34,0.56,0.78,0.90\n"
+)
+
+CSV_CONTENT_EPOCH5 = (
+    "epoch,train/box_loss,metrics/mAP50(B),metrics/mAP50-95(B),metrics/precision(B),metrics/recall(B)\n"
+    "0,0.2,0.2,0.2,0.4,0.5\n"
+    "5,0.1,0.4,0.6,0.8,0.9\n"
 )
 
 
@@ -92,6 +99,7 @@ def test_get_status_running_with_metrics(
 
     mock_ssh.execute.return_value = (CSV_CONTENT, "", 0)
     mock_ssh.process_alive.return_value = True
+    mock_notifier.send_rich_card_with_message_id.return_value = "om_1"
 
     result = get_status(
         job_id="job-1",
@@ -113,6 +121,9 @@ def test_get_status_running_with_metrics(
     assert metrics["precision"] == 0.78
     assert metrics["recall"] == 0.9
     assert metrics["primaryMetric"] == 0.56
+    latest = state_store.get("job-1")
+    assert latest is not None
+    assert latest.feishu_message_id == "om_1"
 
 
 def test_get_status_completed(
@@ -140,4 +151,99 @@ def test_get_status_completed(
     assert result["status"] == JobStatus.COMPLETED.value
     assert result["progress"] == 1.0
     mock_tracker.finish_run.assert_called()
+
+
+def test_get_status_milestone_message_contains_eta_and_delta(
+    mock_ssh: MagicMock,
+    mock_tracker: MagicMock,
+    mock_notifier: MagicMock,
+    state_store,
+) -> None:
+    record = _make_record("job-2", status=JobStatus.RUNNING, pid="123", train_epochs=10)
+    state_store.upsert(record)
+
+    mock_ssh.execute.return_value = (CSV_CONTENT_EPOCH5, "", 0)
+    mock_ssh.process_alive.return_value = True
+    mock_notifier.send_rich_card_with_message_id.return_value = "om_new"
+
+    result = get_status(
+        job_id="job-2",
+        run_id="run-1",
+        state_store=state_store,
+        ssh_client=mock_ssh,
+        tracker=mock_tracker,
+        notifier=mock_notifier,
+        feishu_report_enable=True,
+        feishu_report_every_n_epochs=5,
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == JobStatus.RUNNING.value
+    mock_notifier.send_rich_card_with_message_id.assert_called_once()
+    kwargs = mock_notifier.send_rich_card_with_message_id.call_args.kwargs
+    assert kwargs["title"] == "[YOLO] 训练里程碑"
+    assert "**Progress**:" in kwargs["md_text"]
+    assert "**Elapsed / ETA**:" in kwargs["md_text"]
+    assert "**map5095**:" in kwargs["md_text"]
+    assert "(+" in kwargs["md_text"] or "(-" in kwargs["md_text"] or "(n/a" in kwargs["md_text"]
+
+
+def test_get_status_updates_existing_card_then_no_resend(
+    mock_ssh: MagicMock,
+    mock_tracker: MagicMock,
+    mock_notifier: MagicMock,
+    state_store,
+) -> None:
+    record = _make_record("job-3", status=JobStatus.RUNNING, pid="123", train_epochs=10)
+    record = replace(record, feishu_message_id="om_exist")
+    state_store.upsert(record)
+
+    mock_ssh.execute.return_value = (CSV_CONTENT_EPOCH5, "", 0)
+    mock_ssh.process_alive.return_value = True
+    mock_notifier.update_rich_card.return_value = True
+
+    result = get_status(
+        job_id="job-3",
+        run_id="run-1",
+        state_store=state_store,
+        ssh_client=mock_ssh,
+        tracker=mock_tracker,
+        notifier=mock_notifier,
+        feishu_report_enable=True,
+    )
+
+    assert result["ok"] is True
+    mock_notifier.update_rich_card.assert_called_once()
+    mock_notifier.send_rich_card_with_message_id.assert_not_called()
+
+
+def test_get_status_fallback_resend_when_update_fails(
+    mock_ssh: MagicMock,
+    mock_tracker: MagicMock,
+    mock_notifier: MagicMock,
+    state_store,
+) -> None:
+    record = _make_record("job-4", status=JobStatus.RUNNING, pid="123", train_epochs=10)
+    record = replace(record, feishu_message_id="om_old")
+    state_store.upsert(record)
+
+    mock_ssh.execute.return_value = (CSV_CONTENT_EPOCH5, "", 0)
+    mock_ssh.process_alive.return_value = True
+    mock_notifier.update_rich_card.return_value = False
+    mock_notifier.send_rich_card_with_message_id.return_value = "om_new"
+
+    result = get_status(
+        job_id="job-4",
+        run_id="run-1",
+        state_store=state_store,
+        ssh_client=mock_ssh,
+        tracker=mock_tracker,
+        notifier=mock_notifier,
+        feishu_report_enable=True,
+    )
+
+    assert result["ok"] is True
+    latest = state_store.get("job-4")
+    assert latest is not None
+    assert latest.feishu_message_id == "om_new"
 

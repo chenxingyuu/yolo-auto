@@ -95,6 +95,43 @@ class FeishuNotifier:
         )
         self._send_card(card)
 
+    def send_rich_card_with_message_id(
+        self,
+        *,
+        title: str,
+        md_text: str,
+        header_color: Literal["blue", "green", "red", "orange"] = "blue",
+        actions: list[dict[str, Any]] | None = None,
+    ) -> str | None:
+        if not self._app_bot:
+            return None
+        card = self._build_rich_card(
+            title=title,
+            md_text=md_text,
+            header_color=header_color,
+            actions=actions,
+        )
+        return self._send_card_via_app_bot_with_message_id(card)
+
+    def update_rich_card(
+        self,
+        *,
+        message_id: str,
+        title: str,
+        md_text: str,
+        header_color: Literal["blue", "green", "red", "orange"] = "blue",
+        actions: list[dict[str, Any]] | None = None,
+    ) -> bool:
+        if not self._app_bot:
+            return False
+        card = self._build_rich_card(
+            title=title,
+            md_text=md_text,
+            header_color=header_color,
+            actions=actions,
+        )
+        return self._update_card_via_app_bot(message_id=message_id, card=card)
+
     def _build_interactive_card_payload(self, *, title: str, md_text: str) -> dict:
         return {
             "msg_type": "interactive",
@@ -176,6 +213,9 @@ class FeishuNotifier:
         return self._post_json_with_retry(self._webhook_url, payload, headers=None)
 
     def _send_card_via_app_bot(self, card: dict[str, Any]) -> bool:
+        return self._send_card_via_app_bot_with_message_id(card) is not None
+
+    def _send_card_via_app_bot_with_message_id(self, card: dict[str, Any]) -> str | None:
         assert self._app_bot is not None
         token = self._get_tenant_access_token()
         url = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"
@@ -185,7 +225,30 @@ class FeishuNotifier:
             "msg_type": "interactive",
             "content": json.dumps(card, ensure_ascii=False),
         }
-        return self._post_json_with_retry(url, payload, headers=headers)
+        data = self._post_json_with_retry_result(url, payload, headers=headers)
+        if not data:
+            return None
+        message_id = str(data.get("message_id", "")).strip()
+        return message_id or None
+
+    def _update_card_via_app_bot(self, *, message_id: str, card: dict[str, Any]) -> bool:
+        assert self._app_bot is not None
+        token = self._get_tenant_access_token()
+        url = f"https://open.feishu.cn/open-apis/im/v1/messages/{message_id}"
+        headers = {"Authorization": f"Bearer {token}"}
+        payload = {
+            "msg_type": "interactive",
+            "content": json.dumps(card, ensure_ascii=False),
+        }
+        return (
+            self._post_json_with_retry_result(
+                url,
+                payload,
+                headers=headers,
+                method="patch",
+            )
+            is not None
+        )
 
     def _post_json_with_retry(
         self,
@@ -195,22 +258,47 @@ class FeishuNotifier:
         headers: dict[str, str] | None,
         max_attempts: int = 3,
     ) -> bool:
+        return (
+            self._post_json_with_retry_result(
+                url,
+                payload,
+                headers=headers,
+                max_attempts=max_attempts,
+            )
+            is not None
+        )
+
+    def _post_json_with_retry_result(
+        self,
+        url: str | None,
+        payload: dict[str, Any],
+        *,
+        headers: dict[str, str] | None,
+        max_attempts: int = 3,
+        method: Literal["post", "patch"] = "post",
+    ) -> dict[str, Any] | None:
         if not url:
-            return False
+            return None
         last_exc: Exception | None = None
         for attempt in range(max_attempts):
             try:
                 timeout = httpx.Timeout(self._timeout_seconds)
                 with httpx.Client(timeout=timeout) as client:
-                    response = client.post(url, json=payload, headers=headers)
+                    if method == "patch":
+                        response = client.patch(url, json=payload, headers=headers)
+                    else:
+                        response = client.post(url, json=payload, headers=headers)
                     response.raise_for_status()
-                    return True
+                    data = response.json()
+                    if isinstance(data, dict):
+                        return dict(data.get("data") or {})
+                    return {}
             except Exception as exc:
                 last_exc = exc
                 if attempt < max_attempts - 1:
                     time.sleep(0.4 * (2**attempt))
         _ = last_exc
-        return False
+        return None
 
     def _get_tenant_access_token(self) -> str:
         assert self._app_bot is not None

@@ -56,6 +56,7 @@ class JobStateStore:
             updated_at=now_ts,
             env_id=record.env_id,
             last_notified_state=record.last_notified_state,
+            feishu_message_id=record.feishu_message_id,
             last_metrics_at=record.last_metrics_at,
             train_epochs=record.train_epochs,
             last_reported_epoch=record.last_reported_epoch,
@@ -77,6 +78,7 @@ class JobStateStore:
             updated_at=now_ts,
             env_id=record.env_id,
             last_notified_state=notified_state,
+            feishu_message_id=record.feishu_message_id,
             last_metrics_at=record.last_metrics_at,
             train_epochs=record.train_epochs,
             last_reported_epoch=record.last_reported_epoch,
@@ -98,6 +100,7 @@ class JobStateStore:
             updated_at=now_ts,
             env_id=record.env_id,
             last_notified_state=record.last_notified_state,
+            feishu_message_id=record.feishu_message_id,
             last_metrics_at=now_ts,
             train_epochs=record.train_epochs,
             last_reported_epoch=record.last_reported_epoch,
@@ -119,9 +122,37 @@ class JobStateStore:
             updated_at=now_ts,
             env_id=record.env_id,
             last_notified_state=record.last_notified_state,
+            feishu_message_id=record.feishu_message_id,
             last_metrics_at=record.last_metrics_at,
             train_epochs=record.train_epochs,
             last_reported_epoch=epoch,
+        )
+        self.upsert(updated)
+        return updated
+
+    def mark_feishu_message(
+        self,
+        job_id: str,
+        message_id: str | None,
+        now_ts: int,
+    ) -> JobRecord:
+        record = self.get(job_id)
+        if not record:
+            raise ValueError(f"job not found: {job_id}")
+        updated = JobRecord(
+            job_id=record.job_id,
+            run_id=record.run_id,
+            status=record.status,
+            pid=record.pid,
+            paths=record.paths,
+            created_at=record.created_at,
+            updated_at=now_ts,
+            env_id=record.env_id,
+            last_notified_state=record.last_notified_state,
+            feishu_message_id=message_id,
+            last_metrics_at=record.last_metrics_at,
+            train_epochs=record.train_epochs,
+            last_reported_epoch=record.last_reported_epoch,
         )
         self.upsert(updated)
         return updated

@@ -15,6 +15,136 @@ from yolo_auto.tools.metrics_csv import metric_value_from_parsed, parse_training
 from yolo_auto.tracker import MLflowTracker
 
 
+def _build_mlflow_actions(mlflow_url: str | None) -> list[dict[str, Any]] | None:
+    if not mlflow_url:
+        return None
+    return [
+        {
+            "tag": "button",
+            "text": {"tag": "plain_text", "content": "查看 MLflow"},
+            "type": "url",
+            "url": mlflow_url,
+        }
+    ]
+
+
+def _format_duration(seconds: int) -> str:
+    seconds = max(int(seconds), 0)
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours > 0:
+        return f"{hours}h{minutes:02d}m"
+    if minutes > 0:
+        return f"{minutes}m{secs:02d}s"
+    return f"{secs}s"
+
+
+def _format_signed(value: float) -> str:
+    return f"{value:+.4f}"
+
+
+def _estimate_eta_seconds(*, epoch: int, total_epochs: int, elapsed_seconds: int) -> int | None:
+    if epoch <= 0 or total_epochs <= epoch:
+        return None
+    avg_epoch_seconds = elapsed_seconds / max(epoch, 1)
+    remaining_epochs = max(total_epochs - epoch, 0)
+    return int(avg_epoch_seconds * remaining_epochs)
+
+
+def _pick_row_for_epoch(rows: list[dict[str, Any]], target_epoch: int) -> dict[str, Any] | None:
+    if target_epoch <= 0:
+        return None
+    candidate: dict[str, Any] | None = None
+    for row in rows:
+        try:
+            parsed = parse_training_row(row)
+            row_epoch = int(parsed["epoch"])
+        except Exception:
+            continue
+        if row_epoch <= target_epoch:
+            candidate = row
+        else:
+            break
+    return candidate
+
+
+def _build_state_change_body(
+    *,
+    job_id: str,
+    status_value: str,
+    log_tail: str | None = None,
+) -> str:
+    parts = [
+        "## 任务状态",
+        f"- **Job**: `{job_id}`",
+        f"- **状态**: **{status_value}**",
+    ]
+    if log_tail:
+        parts.extend(
+            [
+                "",
+                "## 错误片段（train.log 尾部）",
+                f"```text\n{log_tail}\n```",
+            ]
+        )
+    return "\n".join(parts)
+
+
+def _build_milestone_body(
+    *,
+    job_id: str,
+    epoch: int,
+    total_epochs: int,
+    progress: float,
+    elapsed_seconds: int,
+    eta_seconds: int | None,
+    primary_metric_key: str,
+    primary_value: float,
+    primary_delta_text: str,
+    loss: float,
+) -> str:
+    eta_text = _format_duration(eta_seconds) if eta_seconds is not None else "n/a"
+    return "\n".join(
+        [
+            "## 训练进度",
+            f"- **Job**: `{job_id}`",
+            f"- **Epoch**: `{epoch}/{total_epochs}`",
+            f"- **Progress**: **{progress * 100:.1f}%**",
+            f"- **Elapsed / ETA**: `{_format_duration(elapsed_seconds)}` / `{eta_text}`",
+            "",
+            "## 关键指标",
+            f"- **{primary_metric_key}**: **{primary_value:.4f}** ({primary_delta_text})",
+            f"- **Loss**: `{loss:.4f}`",
+        ]
+    )
+
+
+def _build_completed_body(
+    *,
+    job_id: str,
+    epoch: int,
+    total_epochs: int,
+    elapsed_seconds: int,
+    loss: float,
+    map5095: float,
+    primary_metric_key: str,
+    primary_value: float,
+) -> str:
+    return "\n".join(
+        [
+            "## 训练结果",
+            f"- **Job**: `{job_id}`",
+            f"- **Epoch**: `{epoch}/{total_epochs}`",
+            f"- **总耗时**: `{_format_duration(elapsed_seconds)}`",
+            "",
+            "## 最终指标",
+            f"- **mAP50-95**: **{map5095:.4f}**",
+            f"- **{primary_metric_key}**: **{primary_value:.4f}**",
+            f"- **Loss**: `{loss:.4f}`",
+        ]
+    )
+
+
 def _generate_loss_map_chart_png_b64(
     rows: list[dict[str, Any]],
     *,
@@ -97,6 +227,38 @@ def _generate_loss_map_chart_png(
         return None
 
 
+def _upsert_training_card(
+    *,
+    record,
+    now_ts: int,
+    state_store: JobStateStore,
+    notifier: FeishuNotifier,
+    title: str,
+    md_text: str,
+    header_color: str,
+    actions: list[dict[str, Any]] | None,
+):
+    if record.feishu_message_id:
+        updated_ok = notifier.update_rich_card(
+            message_id=record.feishu_message_id,
+            title=title,
+            md_text=md_text,
+            header_color=header_color,  # type: ignore[arg-type]
+            actions=actions,
+        )
+        if updated_ok:
+            return record
+    new_message_id = notifier.send_rich_card_with_message_id(
+        title=title,
+        md_text=md_text,
+        header_color=header_color,  # type: ignore[arg-type]
+        actions=actions,
+    )
+    if not new_message_id:
+        return record
+    return state_store.mark_feishu_message(record.job_id, new_message_id, now_ts)
+
+
 def get_status(
     job_id: str,
     run_id: str,
@@ -139,30 +301,25 @@ def get_status(
         failed = "error" in log_content.lower() or "traceback" in log_content.lower()
         target = JobStatus.FAILED if failed else JobStatus.COMPLETED
         updated = state_store.update_status(job_id, target, now)
+        title = "[YOLO] 状态变更"
+        mlflow_url = tracker.get_run_url(effective_run_id)
+        header_color = "red" if target == JobStatus.FAILED else "green"
+        body = _build_state_change_body(
+            job_id=job_id,
+            status_value=target.value,
+            log_tail=log_content.strip() if target == JobStatus.FAILED else None,
+        )
+        updated = _upsert_training_card(
+            record=updated,
+            now_ts=now,
+            state_store=state_store,
+            notifier=notifier,
+            title=title,
+            md_text=body,
+            header_color=header_color,
+            actions=_build_mlflow_actions(mlflow_url),
+        )
         if updated.last_notified_state != target:
-            title = "[YOLO] 状态变更"
-            mlflow_url = tracker.get_run_url(effective_run_id)
-            header_color = "red" if target == JobStatus.FAILED else "green"
-            body = f"job={job_id}\n状态={target.value}\nrunId={effective_run_id}"
-            if target == JobStatus.FAILED and log_content.strip():
-                body = f"{body}\n\n**train.log(尾部)**\n```\n{log_content.strip()}\n```"
-            notifier.send_rich_card(
-                title=title,
-                md_text=body,
-                header_color=header_color,  # type: ignore[arg-type]
-                actions=(
-                    [
-                        {
-                            "tag": "button",
-                            "text": {"tag": "plain_text", "content": "查看 MLflow"},
-                            "type": "url",
-                            "url": mlflow_url,
-                        }
-                    ]
-                    if mlflow_url
-                    else None
-                ),
-            )
             state_store.mark_notified(job_id, target, now)
         if target == JobStatus.FAILED:
             return err(
@@ -210,97 +367,77 @@ def get_status(
     record = state_store.mark_metrics(job_id, now)
     total_epochs = max(record.train_epochs or 100, 1)
     progress = round(min(1.0, epoch / total_epochs), 4)
+    elapsed_seconds = max(now - record.created_at, 0)
+    eta_seconds = _estimate_eta_seconds(
+        epoch=epoch,
+        total_epochs=total_epochs,
+        elapsed_seconds=elapsed_seconds,
+    )
+    process_alive = ssh_client.process_alive(record.pid)
 
-    if ssh_client.process_alive(record.pid) and feishu_report_enable:
-        n = feishu_report_every_n_epochs
-        if n > 0 and epoch > 0 and epoch >= record.last_reported_epoch + n:
+    if process_alive and feishu_report_enable:
+        if epoch > 0:
             title = "[YOLO] 训练里程碑"
             mlflow_url = tracker.get_run_url(effective_run_id)
-            body = (
-                f"job={job_id}\n"
-                f"epoch={epoch}/{total_epochs}\n"
-                f"{primary_metric_key}={primary_value:.4f}\n"
-                f"runId={effective_run_id}"
+            previous_metric_text = "n/a"
+            prev_row = _pick_row_for_epoch(rows, record.last_reported_epoch)
+            if prev_row is not None:
+                prev_parsed = parse_training_row(prev_row)
+                prev_primary = float(
+                    metric_value_from_parsed(prev_parsed, primary_metric_key)
+                )
+                previous_metric_text = _format_signed(primary_value - prev_primary)
+            body = _build_milestone_body(
+                job_id=job_id,
+                epoch=epoch,
+                total_epochs=total_epochs,
+                progress=progress,
+                elapsed_seconds=elapsed_seconds,
+                eta_seconds=eta_seconds,
+                primary_metric_key=primary_metric_key,
+                primary_value=float(primary_value),
+                primary_delta_text=previous_metric_text,
+                loss=loss,
             )
-            notifier.send_rich_card(
+            record = _upsert_training_card(
+                record=record,
+                now_ts=now,
+                state_store=state_store,
+                notifier=notifier,
                 title=title,
                 md_text=body,
                 header_color="blue",
-                actions=(
-                    [
-                        {
-                            "tag": "button",
-                            "text": {"tag": "plain_text", "content": "查看 MLflow"},
-                            "type": "url",
-                            "url": mlflow_url,
-                        }
-                    ]
-                    if mlflow_url
-                    else None
-                ),
+                actions=_build_mlflow_actions(mlflow_url),
             )
-            record = state_store.mark_milestone_epoch(job_id, epoch, now)
+            if epoch > record.last_reported_epoch:
+                record = state_store.mark_milestone_epoch(job_id, epoch, now)
 
-    if not ssh_client.process_alive(record.pid):
+    if not process_alive:
         updated = state_store.update_status(job_id, JobStatus.COMPLETED, now)
         tracker.finish_run(effective_run_id, updated.paths.get("bestPath"))
+        title = "[YOLO] 任务完成"
+        mlflow_url = tracker.get_run_url(effective_run_id)
+        body = _build_completed_body(
+            job_id=job_id,
+            epoch=epoch,
+            total_epochs=total_epochs,
+            elapsed_seconds=elapsed_seconds,
+            loss=loss,
+            map5095=map5095,
+            primary_metric_key=primary_metric_key,
+            primary_value=float(primary_value),
+        )
+        updated = _upsert_training_card(
+            record=updated,
+            now_ts=now,
+            state_store=state_store,
+            notifier=notifier,
+            title=title,
+            md_text=body,
+            header_color="green",
+            actions=_build_mlflow_actions(mlflow_url),
+        )
         if updated.last_notified_state != JobStatus.COMPLETED:
-            title = "[YOLO] 任务完成"
-            mlflow_url = tracker.get_run_url(effective_run_id)
-            body = (
-                f"job={job_id}\n"
-                f"loss={loss:.4f}\n"
-                f"mAP50-95={map5095:.4f}\n"
-                f"{primary_metric_key}={primary_value:.4f}\n"
-                f"runId={effective_run_id}"
-            )
-            chart_png: bytes | None = None
-            if feishu_report_enable:
-                chart_png = _generate_loss_map_chart_png(
-                    rows,
-                    primary_metric_key=primary_metric_key,
-                )
-
-            try:
-                if chart_png:
-                    notifier.send_training_completed_with_chart_png(
-                        title=title,
-                        body_md=body,
-                        chart_png=chart_png,
-                        header_color="green",
-                        actions=(
-                            [
-                                {
-                                    "tag": "button",
-                                    "text": {"tag": "plain_text", "content": "查看 MLflow"},
-                                    "type": "url",
-                                    "url": mlflow_url,
-                                }
-                            ]
-                            if mlflow_url
-                            else None
-                        ),
-                    )
-                else:
-                    notifier.send_rich_card(
-                        title=title,
-                        md_text=body,
-                        header_color="green",
-                        actions=(
-                            [
-                                {
-                                    "tag": "button",
-                                    "text": {"tag": "plain_text", "content": "查看 MLflow"},
-                                    "type": "url",
-                                    "url": mlflow_url,
-                                }
-                            ]
-                            if mlflow_url
-                            else None
-                        ),
-                    )
-            except Exception:
-                notifier.send_training_update(title, body)
             state_store.mark_notified(job_id, JobStatus.COMPLETED, now)
         status_value = updated.status.value
     else:

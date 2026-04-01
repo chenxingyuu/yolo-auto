@@ -48,3 +48,31 @@ def test_send_rich_card_basic() -> None:
     assert card["header"]["template"] == "blue"
     assert card["elements"][0]["text"]["content"] == "hello"
 
+
+def test_send_rich_card_with_message_id_app_bot() -> None:
+    notifier = FeishuNotifier(app_id="a", app_secret="b", chat_id="c")
+    notifier._send_card_via_app_bot_with_message_id = MagicMock(return_value="om_xxx")
+
+    message_id = notifier.send_rich_card_with_message_id(
+        title="T",
+        md_text="hello",
+        header_color="blue",
+    )
+
+    assert message_id == "om_xxx"
+
+
+def test_update_rich_card_app_bot() -> None:
+    notifier = FeishuNotifier(app_id="a", app_secret="b", chat_id="c")
+    notifier._update_card_via_app_bot = MagicMock(return_value=True)
+
+    ok = notifier.update_rich_card(
+        message_id="om_xxx",
+        title="T",
+        md_text="updated",
+        header_color="green",
+    )
+
+    assert ok is True
+    notifier._update_card_via_app_bot.assert_called_once()
+
