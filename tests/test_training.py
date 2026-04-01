@@ -27,6 +27,7 @@ def test_start_training_success(
     mock_tracker: MagicMock,
     state_store,
 ) -> None:
+    mock_ssh.execute.return_value = ("", "", 0)
     mock_ssh.execute_background.return_value = ("12345", 0)
 
     req = _make_req("job-1")
@@ -80,6 +81,7 @@ def test_start_training_ssh_fail(
     mock_tracker: MagicMock,
     state_store,
 ) -> None:
+    mock_ssh.execute.return_value = ("", "", 0)
     mock_ssh.execute_background.side_effect = RuntimeError("ssh fail")
 
     req = _make_req("job-1")
@@ -88,4 +90,21 @@ def test_start_training_ssh_fail(
     assert result["ok"] is False
     assert result["errorCode"] == "START_FAILED"
     assert result["retryable"] is True
+
+
+def test_start_training_model_not_found(
+    mock_ssh: MagicMock,
+    mock_notifier: MagicMock,
+    mock_tracker: MagicMock,
+    state_store,
+) -> None:
+    mock_ssh.execute.return_value = ("", "", 1)
+
+    req = _make_req("job-missing-model")
+    result = start_training(req, mock_ssh, mock_notifier, mock_tracker, state_store)
+
+    assert result["ok"] is False
+    assert result["errorCode"] == "MODEL_NOT_FOUND"
+    mock_tracker.start_run.assert_not_called()
+    mock_ssh.execute_background.assert_not_called()
 

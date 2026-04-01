@@ -28,6 +28,12 @@ class TrainRequest:
     extra_args: dict[str, Any] | None = None
 
 
+def _resolve_remote_path(path: str, work_dir: str) -> str:
+    if path.startswith("/"):
+        return path
+    return f"{work_dir.rstrip('/')}/{path.lstrip('./')}"
+
+
 def _format_yolo_value(value: Any) -> str:
     if isinstance(value, bool):
         return "True" if value else "False"
@@ -61,6 +67,18 @@ def start_training(
     existing = state_store.get(req.job_id)
     if existing and existing.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
         return ok(existing.to_dict())
+
+    model_abs_path = _resolve_remote_path(req.model, req.work_dir)
+    model_q = shlex.quote(model_abs_path)
+    _, _, model_exists_code = ssh_client.execute(f"test -f {model_q}")
+    if model_exists_code != 0:
+        return err(
+            error_code="MODEL_NOT_FOUND",
+            message=f"model not found: {model_abs_path}",
+            retryable=False,
+            hint="请先确认模型路径存在，或先调用 yolo_setup_env 做环境预检查",
+            payload={"jobId": req.job_id, "modelPath": model_abs_path},
+        )
 
     run_id = tracker.start_run(
         job_id=req.job_id,
