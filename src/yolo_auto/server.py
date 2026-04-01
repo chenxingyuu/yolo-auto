@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import os
-import time
 from collections.abc import Callable
 from typing import Annotated, Any
-from uuid import uuid4
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
@@ -34,6 +32,7 @@ from yolo_auto.tools.dataset import (
 from yolo_auto.tools.dataset_check import check_dataset
 from yolo_auto.tools.dataset_fix import fix_dataset
 from yolo_auto.tools.export import run_export
+from yolo_auto.tools.job_naming import resolve_job_id
 from yolo_auto.tools.jobs import get_job, list_jobs
 from yolo_auto.tools.setup_env import setup_env
 from yolo_auto.tools.status import get_status
@@ -934,7 +933,12 @@ def yolo_start_training(
     成功时返回含 jobId、runId、status、paths（日志与权重路径提示）等；
     重复启动同 job 且仍在队列/运行中会直接返回已有记录。
     """
-    resolved_job_id = jobId or f"job-{int(time.time())}-{uuid4().hex[:8]}"
+    resolved_job_id = resolve_job_id(
+        jobId,
+        model=model,
+        data_config_path=dataConfigPath,
+        state_store=STATE_STORE,
+    )
     merged_extras = _merge_training_cli_extras(
         extraArgs,
         {
