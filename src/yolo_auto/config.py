@@ -20,6 +20,8 @@ class Settings:
     feishu_chat_id: str | None
     feishu_report_enable: bool
     feishu_report_every_n_epochs: int
+    feishu_card_img_key: str | None
+    feishu_card_fallback_img_key: str | None
     primary_metric_key: str
     mlflow_tracking_uri: str
     mlflow_experiment_name: str
@@ -144,6 +146,10 @@ def load_settings() -> Settings:
         feishu_report_enable=_env_truthy(_get_env("FEISHU_REPORT_ENABLE", "true")),
         feishu_report_every_n_epochs=max(
             0, int(_get_env("FEISHU_REPORT_EVERY_N_EPOCHS", "5"))
+        ),
+        feishu_card_img_key=_get_env_optional("FEISHU_CARD_IMG_KEY"),
+        feishu_card_fallback_img_key=_get_env_optional(
+            "FEISHU_CARD_FALLBACK_IMG_KEY"
         ),
         primary_metric_key=_get_env("YOLO_PRIMARY_METRIC", "map5095"),
         mlflow_tracking_uri=_get_env("MLFLOW_TRACKING_URI", "sqlite:////data/mlflow/mlflow.db"),

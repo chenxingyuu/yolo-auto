@@ -91,6 +91,7 @@ cp .env.example .env
 | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` / `FEISHU_CHAT_ID` | 飞书应用机器人配置（推荐，支持更丰富消息能力） |
 | `FEISHU_REPORT_ENABLE` | 是否启用训练中里程碑推送（默认 `true`） |
 | `FEISHU_REPORT_EVERY_N_EPOCHS` | 每 N 个 epoch 推一次（`0` 表示关闭里程碑，仅状态变化时推送） |
+| `FEISHU_CARD_IMG_KEY` / `FEISHU_CARD_FALLBACK_IMG_KEY` | 可选：训练 schema 2.0 卡片顶部图片与 fallback 图片 key |
 | `YOLO_PRIMARY_METRIC` | 主指标名，写入 MLflow 与里程碑文案，如 `map5095` |
 | `MLFLOW_*` | 追踪后端与实验名 |
 | `YOLO_WORK_DIR` / `YOLO_DATASETS_DIR` / `YOLO_JOBS_DIR` / `YOLO_MODELS_DIR` | 远程路径（工作区、数据集、输出、预训练权重） |

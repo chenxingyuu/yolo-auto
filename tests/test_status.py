@@ -185,6 +185,40 @@ def test_get_status_milestone_message_contains_eta_and_delta(
     assert card["schema"] == "2.0"
     assert card["header"]["title"]["content"] == "YOLO模型训练里程碑"
     assert card["body"]["elements"][0]["tag"] == "column_set"
+    assert "更新时间：" in card["body"]["elements"][-1]["content"]
+
+
+def test_get_status_card_supports_configurable_top_image(
+    mock_ssh: MagicMock,
+    mock_tracker: MagicMock,
+    mock_notifier: MagicMock,
+    state_store,
+) -> None:
+    record = _make_record("job-img", status=JobStatus.RUNNING, pid="123", train_epochs=10)
+    state_store.upsert(record)
+
+    mock_ssh.execute.return_value = (CSV_CONTENT_EPOCH5, "", 0)
+    mock_ssh.process_alive.return_value = True
+    mock_notifier.send_schema_card_with_message_id.return_value = "om_img"
+
+    result = get_status(
+        job_id="job-img",
+        run_id="run-1",
+        state_store=state_store,
+        ssh_client=mock_ssh,
+        tracker=mock_tracker,
+        notifier=mock_notifier,
+        feishu_card_img_key="img_v3_demo",
+        feishu_card_fallback_img_key="img_v3_fb",
+    )
+
+    assert result["ok"] is True
+    kwargs = mock_notifier.send_schema_card_with_message_id.call_args.kwargs
+    card = kwargs["card"]
+    assert card["body"]["elements"][0]["tag"] == "img"
+    assert card["body"]["elements"][0]["img_key"] == "img_v3_demo"
+    assert card["body"]["elements"][0]["fallback_img_key"] == "img_v3_fb"
+    assert "更新时间：" in card["body"]["elements"][-1]["content"]
 
 
 def test_get_status_updates_existing_card_then_no_resend(

@@ -75,8 +75,91 @@ def _build_training_schema_card(
     map5095: float,
     recall: float,
     loss: float,
+    updated_time_text: str,
+    top_img_key: str | None = None,
+    top_img_fallback_key: str | None = None,
 ) -> dict[str, Any]:
     progress_pct = _to_percent(progress)
+    elements: list[dict[str, Any]] = []
+    if top_img_key:
+        image_element: dict[str, Any] = {
+            "tag": "img",
+            "img_key": top_img_key,
+            "alt": {"tag": "plain_text", "content": "training cover"},
+            "scale_type": "fit_horizontal",
+            "size": "stretch",
+        }
+        if top_img_fallback_key:
+            image_element["fallback_img_key"] = top_img_fallback_key
+        elements.append(image_element)
+    elements.extend(
+        [
+            {
+                "tag": "column_set",
+                "flex_mode": "stretch",
+                "horizontal_spacing": "12px",
+                "margin": "0px",
+                "columns": [
+                    _metric_column(
+                        value=epoch_text,
+                        label="Epoch",
+                        value_color="blue",
+                        background_style="blue-50",
+                    ),
+                    _metric_column(
+                        value=f"{progress_pct:.1f}%",
+                        label="训练进度",
+                        value_color="blue",
+                        background_style="blue-50",
+                    ),
+                    _metric_column(
+                        value=f"{elapsed_text} / {eta_text}",
+                        label="Elapsed / ETA",
+                        value_color="blue",
+                        background_style="blue-50",
+                        weight=2,
+                    ),
+                ],
+            },
+            {
+                "tag": "column_set",
+                "flex_mode": "stretch",
+                "horizontal_spacing": "12px",
+                "margin": "0px",
+                "columns": [
+                    _metric_column(
+                        value=f"{map50:.3f}",
+                        label="mAP50",
+                        value_color="violet",
+                        background_style="violet-50",
+                    ),
+                    _metric_column(
+                        value=f"{map5095:.3f}",
+                        label="mAP50-95",
+                        value_color="violet",
+                        background_style="violet-50",
+                    ),
+                    _metric_column(
+                        value=f"{recall:.3f}",
+                        label="Recall",
+                        value_color="purple",
+                        background_style="purple-50",
+                    ),
+                    _metric_column(
+                        value=f"{loss:.3f}",
+                        label="Loss",
+                        value_color="purple",
+                        background_style="purple-50",
+                    ),
+                ],
+            },
+            {
+                "tag": "markdown",
+                "content": f"<font color='grey'>更新时间：{updated_time_text}</font>",
+                "text_align": "right",
+            },
+        ]
+    )
     return {
         "schema": "2.0",
         "header": {
@@ -85,69 +168,7 @@ def _build_training_schema_card(
             "icon": {"tag": "standard_icon", "token": "code", "color": header_template},
             "title": {"tag": "plain_text", "content": title},
         },
-        "body": {
-            "elements": [
-                {
-                    "tag": "column_set",
-                    "flex_mode": "stretch",
-                    "horizontal_spacing": "12px",
-                    "margin": "0px",
-                    "columns": [
-                        _metric_column(
-                            value=epoch_text,
-                            label="Epoch",
-                            value_color="blue",
-                            background_style="blue-50",
-                        ),
-                        _metric_column(
-                            value=f"{progress_pct:.1f}%",
-                            label="训练进度",
-                            value_color="blue",
-                            background_style="blue-50",
-                        ),
-                        _metric_column(
-                            value=f"{elapsed_text} / {eta_text}",
-                            label="Elapsed / ETA",
-                            value_color="blue",
-                            background_style="blue-50",
-                            weight=2,
-                        ),
-                    ],
-                },
-                {
-                    "tag": "column_set",
-                    "flex_mode": "stretch",
-                    "horizontal_spacing": "12px",
-                    "margin": "0px",
-                    "columns": [
-                        _metric_column(
-                            value=f"{map50:.3f}",
-                            label="mAP50",
-                            value_color="violet",
-                            background_style="violet-50",
-                        ),
-                        _metric_column(
-                            value=f"{map5095:.3f}",
-                            label="mAP50-95",
-                            value_color="violet",
-                            background_style="violet-50",
-                        ),
-                        _metric_column(
-                            value=f"{recall:.3f}",
-                            label="Recall",
-                            value_color="purple",
-                            background_style="purple-50",
-                        ),
-                        _metric_column(
-                            value=f"{loss:.3f}",
-                            label="Loss",
-                            value_color="purple",
-                            background_style="purple-50",
-                        ),
-                    ],
-                },
-            ]
-        },
+        "body": {"elements": elements},
     }
 
 
@@ -160,6 +181,10 @@ def _format_duration(seconds: int) -> str:
     if minutes > 0:
         return f"{minutes}m{secs:02d}s"
     return f"{secs}s"
+
+
+def _format_card_timestamp(now_ts: int) -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now_ts))
 
 
 def _format_signed(value: float) -> str:
@@ -305,6 +330,8 @@ def get_status(
     feishu_report_enable: bool = True,
     feishu_report_every_n_epochs: int = 5,
     primary_metric_key: str = "map5095",
+    feishu_card_img_key: str | None = None,
+    feishu_card_fallback_img_key: str | None = None,
 ) -> dict[str, object]:
     now = int(time.time())
     record = state_store.get(job_id)
@@ -347,6 +374,9 @@ def get_status(
             map5095=0.0,
             recall=0.0,
             loss=0.0,
+            updated_time_text=_format_card_timestamp(now),
+            top_img_key=feishu_card_img_key,
+            top_img_fallback_key=feishu_card_fallback_img_key,
         )
         updated = _upsert_training_card(
             record=updated,
@@ -424,6 +454,9 @@ def get_status(
                 map5095=map5095,
                 recall=recall,
                 loss=loss,
+                updated_time_text=_format_card_timestamp(now),
+                top_img_key=feishu_card_img_key,
+                top_img_fallback_key=feishu_card_fallback_img_key,
             )
             record = _upsert_training_card(
                 record=record,
@@ -449,6 +482,9 @@ def get_status(
             map5095=map5095,
             recall=recall,
             loss=loss,
+            updated_time_text=_format_card_timestamp(now),
+            top_img_key=feishu_card_img_key,
+            top_img_fallback_key=feishu_card_fallback_img_key,
         )
         updated = _upsert_training_card(
             record=updated,

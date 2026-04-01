@@ -1004,6 +1004,8 @@ def yolo_get_status(
         feishu_report_enable=SETTINGS.feishu_report_enable,
         feishu_report_every_n_epochs=SETTINGS.feishu_report_every_n_epochs,
         primary_metric_key=SETTINGS.primary_metric_key,
+        feishu_card_img_key=SETTINGS.feishu_card_img_key,
+        feishu_card_fallback_img_key=SETTINGS.feishu_card_fallback_img_key,
     )
 
 
@@ -1212,6 +1214,8 @@ def yolo_get_job(
         feishu_report_enable=SETTINGS.feishu_report_enable,
         feishu_report_every_n_epochs=SETTINGS.feishu_report_every_n_epochs,
         primary_metric_key=SETTINGS.primary_metric_key,
+        feishu_card_img_key=SETTINGS.feishu_card_img_key,
+        feishu_card_fallback_img_key=SETTINGS.feishu_card_fallback_img_key,
     )
 
 

@@ -106,6 +106,8 @@ def main() -> None:
                     feishu_report_enable=settings.feishu_report_enable,
                     feishu_report_every_n_epochs=settings.feishu_report_every_n_epochs,
                     primary_metric_key=settings.primary_metric_key,
+                    feishu_card_img_key=settings.feishu_card_img_key,
+                    feishu_card_fallback_img_key=settings.feishu_card_fallback_img_key,
                 )
         time.sleep(settings.watch_poll_interval_seconds)
 

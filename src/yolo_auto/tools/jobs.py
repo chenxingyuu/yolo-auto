@@ -73,6 +73,8 @@ def get_job(
     feishu_report_enable: bool = True,
     feishu_report_every_n_epochs: int = 5,
     primary_metric_key: str = "map5095",
+    feishu_card_img_key: str | None = None,
+    feishu_card_fallback_img_key: str | None = None,
 ) -> dict[str, Any]:
     record = state_store.get(job_id)
     if not record:
@@ -96,6 +98,8 @@ def get_job(
             feishu_report_enable=feishu_report_enable,
             feishu_report_every_n_epochs=feishu_report_every_n_epochs,
             primary_metric_key=primary_metric_key,
+            feishu_card_img_key=feishu_card_img_key,
+            feishu_card_fallback_img_key=feishu_card_fallback_img_key,
         )
         payload["liveStatus"] = status_payload
     return ok(payload)
