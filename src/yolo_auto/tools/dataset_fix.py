@@ -244,7 +244,13 @@ if apply_mode:
             p = Path(line)
             try:
                 rel = p.relative_to(root)
-                rel_lines.append(str(rel))
+                rel_text = str(rel)
+                if rel_text in ("", "."):
+                    rel_lines.append("./")
+                elif rel_text.startswith("./"):
+                    rel_lines.append(rel_text)
+                else:
+                    rel_lines.append(f"./{{rel_text}}")
             except Exception:
                 rel_lines.append(str(p))
         text = "\\n".join(rel_lines) + ("\\n" if rel_lines else "")

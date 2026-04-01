@@ -223,3 +223,32 @@ def test_fix_dataset_exec_failed(mock_ssh: MagicMock) -> None:
     assert result["ok"] is False
     assert result["errorCode"] == "DATASET_FIX_EXEC_FAILED"
 
+
+def test_fix_dataset_split_write_uses_dot_slash_prefix(mock_ssh: MagicMock) -> None:
+    payload = {
+        "dataConfigPath": "/workspace/datasets/a/data.yaml",
+        "datasetRoot": "/workspace/datasets/a",
+        "dryRun": False,
+        "apply": True,
+        "plannedChanges": [],
+        "appliedChanges": [],
+        "backupPaths": [],
+        "riskItems": [],
+        "estimatedImpact": {
+            "plannedChangeCount": 0,
+            "fixedLabelRows": 0,
+            "skippedRiskyRows": 0,
+        },
+    }
+    mock_ssh.execute.return_value = (json.dumps(payload), "", 0)
+    result = fix_dataset(
+        mock_ssh,
+        work_dir="/workspace/yolo-auto",
+        data_config_path="/workspace/datasets/a/data.yaml",
+        dry_run=False,
+        apply=True,
+    )
+    assert result["ok"] is True
+    executed_cmd = mock_ssh.execute.call_args[0][0]
+    assert 'rel_lines.append(f"./{rel_text}")' in executed_cmd
+
