@@ -80,12 +80,12 @@ def write_with_backup(path: Path, text: str):
 
 def normalize_split_file(split_value):
     if split_value is None or str(split_value).strip() == "":
-        return None, [], 0
+        return None, [], 0, 0
     p = Path(str(split_value).strip())
     if not p.is_absolute():
         p = (base_dir / p).resolve()
     if not p.exists():
-        return p, [], 0
+        return p, [], 0, 0
     lines = []
     fixed_prefix = 0
     for raw in p.read_text(encoding="utf-8").splitlines():
