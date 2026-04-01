@@ -2,7 +2,7 @@ from __future__ import annotations
 
 # 后台 Watch Worker。
 #
-# 该脚本会不断轮询本地 `yolo_state_file`（默认 `.state/jobs.json`）里的任务状态：
+# 该脚本会不断轮询本地 `yolo_state_file`（默认 `.state/jobs.db`）里的任务状态：
 # - 对状态为 `RUNNING` 的任务，调用 `get_status(...)` 拉取训练结果/指标，
 #   更新 MLflow，并按配置向飞书推送训练里程碑。
 #

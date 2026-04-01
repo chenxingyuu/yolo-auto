@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 from yolo_auto.models import JobRecord, JobStatus, can_transition
@@ -10,20 +11,34 @@ class JobStateStore:
     def __init__(self, state_file: str) -> None:
         self._state_file = Path(state_file)
         self._state_file.parent.mkdir(parents=True, exist_ok=True)
-        if not self._state_file.exists():
-            self._write_raw({})
+        self._db_path = self._resolve_db_path(self._state_file)
+        self._conn = sqlite3.connect(self._db_path)
+        self._conn.row_factory = sqlite3.Row
+        self._init_schema()
+        self._maybe_migrate_json()
 
     def get(self, job_id: str) -> JobRecord | None:
-        raw = self._read_raw()
-        value = raw.get(job_id)
-        if not value:
+        row = self._conn.execute(
+            "SELECT payload_json FROM jobs WHERE job_id = ?",
+            (job_id,),
+        ).fetchone()
+        if row is None:
             return None
-        return JobRecord.from_dict(value)
+        return JobRecord.from_dict(json.loads(str(row["payload_json"])))
 
     def upsert(self, record: JobRecord) -> None:
-        raw = self._read_raw()
-        raw[record.job_id] = record.to_dict()
-        self._write_raw(raw)
+        payload = json.dumps(record.to_dict(), ensure_ascii=True, separators=(",", ":"))
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO jobs(job_id, payload_json, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(job_id) DO UPDATE SET
+                  payload_json = excluded.payload_json,
+                  updated_at = excluded.updated_at
+                """,
+                (record.job_id, payload, int(record.updated_at)),
+            )
 
     def update_status(self, job_id: str, target_status: JobStatus, now_ts: int) -> JobRecord:
         record = self.get(job_id)
@@ -112,19 +127,65 @@ class JobStateStore:
         return updated
 
     def list_all(self) -> list[JobRecord]:
-        raw = self._read_raw()
-        records = [JobRecord.from_dict(data) for data in raw.values()]
-        records.sort(key=lambda r: r.updated_at, reverse=True)
-        return records
+        rows = self._conn.execute(
+            "SELECT payload_json FROM jobs ORDER BY updated_at DESC"
+        ).fetchall()
+        return [JobRecord.from_dict(json.loads(str(row["payload_json"]))) for row in rows]
 
-    def _read_raw(self) -> dict[str, dict]:
-        if not self._state_file.exists():
-            return {}
-        return json.loads(self._state_file.read_text(encoding="utf-8"))
+    def delete(self, job_id: str) -> bool:
+        with self._conn:
+            cur = self._conn.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
+        return cur.rowcount > 0
 
-    def _write_raw(self, data: dict[str, dict]) -> None:
-        self._state_file.write_text(
-            json.dumps(data, ensure_ascii=True, indent=2),
-            encoding="utf-8",
-        )
+    def _init_schema(self) -> None:
+        with self._conn:
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS jobs (
+                  job_id TEXT PRIMARY KEY,
+                  payload_json TEXT NOT NULL,
+                  updated_at INTEGER NOT NULL
+                )
+                """
+            )
+
+    @staticmethod
+    def _resolve_db_path(state_path: Path) -> Path:
+        suffix = state_path.suffix.lower()
+        if suffix in {".db", ".sqlite", ".sqlite3"}:
+            return state_path
+        return state_path.with_suffix(".db")
+
+    def _maybe_migrate_json(self) -> None:
+        json_path = self._state_file
+        if not json_path.exists():
+            return
+        if json_path.suffix.lower() in {".db", ".sqlite", ".sqlite3"}:
+            return
+
+        raw = json.loads(json_path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError(f"invalid state json format: {json_path}")
+
+        if raw:
+            with self._conn:
+                for job_id, payload in raw.items():
+                    record = JobRecord.from_dict(dict(payload))
+                    payload_json = json.dumps(
+                        record.to_dict(),
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                    )
+                    self._conn.execute(
+                        """
+                        INSERT INTO jobs(job_id, payload_json, updated_at)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(job_id) DO UPDATE SET
+                          payload_json = excluded.payload_json,
+                          updated_at = excluded.updated_at
+                        """,
+                        (job_id, payload_json, int(record.updated_at)),
+                    )
+        backup_path = json_path.with_suffix(f"{json_path.suffix}.bak")
+        json_path.rename(backup_path)
 

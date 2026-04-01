@@ -39,5 +39,5 @@ def mock_tracker() -> MagicMock:
 
 @pytest.fixture
 def state_store(tmp_path: Path) -> JobStateStore:
-    return JobStateStore(str(tmp_path / "jobs.json"))
+    return JobStateStore(str(tmp_path / "jobs.db"))
 

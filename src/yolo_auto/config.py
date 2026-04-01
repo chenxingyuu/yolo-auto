@@ -153,7 +153,7 @@ def load_settings() -> Settings:
         yolo_datasets_dir=_get_env("YOLO_DATASETS_DIR", "/workspace/datasets"),
         yolo_jobs_dir=_get_env("YOLO_JOBS_DIR", "/workspace/jobs"),
         yolo_models_dir=_get_env("YOLO_MODELS_DIR", "/workspace/models"),
-        yolo_state_file=_get_env("YOLO_STATE_FILE", ".state/jobs.json"),
+        yolo_state_file=_get_env("YOLO_STATE_FILE", ".state/jobs.db"),
         watch_poll_interval_seconds=max(
             5, int(_get_env("YOLO_WATCH_POLL_INTERVAL_SECONDS", "30"))
         ),

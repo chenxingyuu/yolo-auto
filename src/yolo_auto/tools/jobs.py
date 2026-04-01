@@ -6,7 +6,7 @@ from typing import Any
 
 from yolo_auto.errors import err, ok
 from yolo_auto.feishu import FeishuNotifier
-from yolo_auto.models import JobRecord
+from yolo_auto.models import JobRecord, JobStatus
 from yolo_auto.ssh_client import SSHClient
 from yolo_auto.state_store import JobStateStore
 from yolo_auto.tools.metrics_csv import parse_training_row
@@ -99,3 +99,25 @@ def get_job(
         )
         payload["liveStatus"] = status_payload
     return ok(payload)
+
+
+def delete_job(job_id: str, state_store: JobStateStore) -> dict[str, Any]:
+    record = state_store.get(job_id)
+    if not record:
+        return err(
+            error_code="JOB_NOT_FOUND",
+            message=f"job not found: {job_id}",
+            retryable=False,
+            hint="请先检查 jobId，或先调用 yolo_list_jobs 查看任务列表",
+            payload={"jobId": job_id},
+        )
+    if record.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
+        return err(
+            error_code="JOB_DELETE_FORBIDDEN",
+            message=f"job is {record.status.value}, stop it before deletion",
+            retryable=False,
+            hint="请先调用 yolo_stop_training 停止任务，再删除状态记录",
+            payload={"jobId": job_id, "status": record.status.value},
+        )
+    deleted = state_store.delete(job_id)
+    return ok({"jobId": job_id, "deleted": deleted})

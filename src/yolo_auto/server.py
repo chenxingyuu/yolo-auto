@@ -33,7 +33,7 @@ from yolo_auto.tools.dataset_check import check_dataset
 from yolo_auto.tools.dataset_fix import fix_dataset
 from yolo_auto.tools.export import run_export
 from yolo_auto.tools.job_naming import resolve_job_id
-from yolo_auto.tools.jobs import get_job, list_jobs
+from yolo_auto.tools.jobs import delete_job, get_job, list_jobs
 from yolo_auto.tools.setup_env import setup_env
 from yolo_auto.tools.status import get_status
 from yolo_auto.tools.sync import sync_dataset
@@ -1213,6 +1213,17 @@ def yolo_get_job(
         feishu_report_every_n_epochs=SETTINGS.feishu_report_every_n_epochs,
         primary_metric_key=SETTINGS.primary_metric_key,
     )
+
+
+@mcp.tool(name="yolo_delete_job")
+def yolo_delete_job(
+    jobId: Annotated[str, Field(description="要删除状态记录的任务 ID。")],
+) -> dict[str, Any]:
+    """删除本地状态记录（仅删除 JobStateStore 中的任务，不会删除远程日志与权重文件）。
+
+    若任务仍处于 queued/running，会拒绝删除以避免丢失运行态追踪信息。
+    """
+    return delete_job(jobId, STATE_STORE)
 
 
 register_resources(

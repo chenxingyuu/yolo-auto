@@ -13,7 +13,7 @@ services:
       MCP_PATH: /mcp/
 
       # Shared state file for jobs
-      YOLO_STATE_FILE: /data/state/jobs.json
+      YOLO_STATE_FILE: /data/state/jobs.db
       YOLO_WATCH_LOCK_FILE: /data/state/watch.lock
       YOLO_WATCH_POLL_INTERVAL_SECONDS: "30"
 
@@ -47,7 +47,7 @@ services:
     command: ["uv", "run", "yolo-auto-watch"]
     env_file: .env
     environment:
-      YOLO_STATE_FILE: /data/state/jobs.json
+      YOLO_STATE_FILE: /data/state/jobs.db
       YOLO_WATCH_LOCK_FILE: /data/state/watch.lock
       YOLO_WATCH_POLL_INTERVAL_SECONDS: "30"
 
