@@ -164,6 +164,42 @@ def test_fix_dataset_absolute_path_no_redundant_normalization(mock_ssh: MagicMoc
     )
 
 
+def test_fix_dataset_plan_contains_data_prefix_normalization(mock_ssh: MagicMock) -> None:
+    payload = {
+        "dataConfigPath": "/workspace/datasets/a/data.yaml",
+        "datasetRoot": "/workspace/datasets/a",
+        "dryRun": True,
+        "apply": False,
+        "plannedChanges": [
+            {
+                "kind": "normalize_split_data_prefix",
+                "file": "/workspace/datasets/a/val.txt",
+                "detail": "fixed data/ prefix paths: 12",
+            }
+        ],
+        "appliedChanges": [],
+        "backupPaths": [],
+        "riskItems": [],
+        "estimatedImpact": {
+            "plannedChangeCount": 1,
+            "fixedLabelRows": 0,
+            "skippedRiskyRows": 0,
+        },
+    }
+    mock_ssh.execute.return_value = (json.dumps(payload), "", 0)
+    result = fix_dataset(
+        mock_ssh,
+        work_dir="/workspace/yolo-auto",
+        data_config_path="/workspace/datasets/a/data.yaml",
+        dry_run=True,
+        apply=False,
+    )
+    assert result["ok"] is True
+    assert any(
+        item["kind"] == "normalize_split_data_prefix" for item in result["plannedChanges"]
+    )
+
+
 def test_fix_dataset_invalid_mode() -> None:
     ssh = MagicMock()
     result = fix_dataset(

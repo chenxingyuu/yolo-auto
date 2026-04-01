@@ -80,13 +80,14 @@ def write_with_backup(path: Path, text: str):
 
 def normalize_split_file(split_value):
     if split_value is None or str(split_value).strip() == "":
-        return None, []
+        return None, [], 0
     p = Path(str(split_value).strip())
     if not p.is_absolute():
         p = (base_dir / p).resolve()
     if not p.exists():
-        return p, []
+        return p, [], 0
     lines = []
+    fixed_prefix = 0
     for raw in p.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if not line:
@@ -94,10 +95,16 @@ def normalize_split_file(split_value):
         ip = Path(line)
         if not ip.is_absolute():
             ip = (root / ip).resolve()
+            if (not ip.exists()) and line.startswith("data/"):
+                trimmed = line[len("data/") :]
+                candidate = (root / Path(trimmed)).resolve()
+                if candidate.exists():
+                    ip = candidate
+                    fixed_prefix += 1
         lines.append(str(ip))
     uniq = list(dict.fromkeys(lines))
     removed = len(lines) - len(uniq)
-    return p, uniq, removed
+    return p, uniq, removed, fixed_prefix
 
 split_results = {{}}
 for split in ("train", "val", "test"):
@@ -105,10 +112,16 @@ for split in ("train", "val", "test"):
     if raw is None or str(raw).strip() == "":
         split_results[split] = {{"path": None, "lines": [], "removedDuplicates": 0}}
         continue
-    p, lines, removed = normalize_split_file(raw)
+    p, lines, removed, fixed_prefix = normalize_split_file(raw)
     split_results[split] = {{"path": p, "lines": lines, "removedDuplicates": removed}}
     if removed > 0:
         add_change("split_deduplicate", p, f"removed duplicates: {{removed}}")
+    if fixed_prefix > 0:
+        add_change(
+            "normalize_split_data_prefix",
+            p,
+            f"fixed data/ prefix paths: {{fixed_prefix}}",
+        )
 
 raw_path = str(data.get("path", ".")).strip() if data.get("path") is not None else "."
 if raw_path in ("", ".", "./"):
