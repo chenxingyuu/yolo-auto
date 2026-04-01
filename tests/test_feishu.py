@@ -76,3 +76,27 @@ def test_update_rich_card_app_bot() -> None:
     assert ok is True
     notifier._update_card_via_app_bot.assert_called_once()
 
+
+def test_send_schema_card_with_message_id_app_bot() -> None:
+    notifier = FeishuNotifier(app_id="a", app_secret="b", chat_id="c")
+    notifier._send_card_via_app_bot_with_message_id = MagicMock(return_value="om_schema")
+
+    message_id = notifier.send_schema_card_with_message_id(
+        card={"schema": "2.0", "header": {}, "body": {}}
+    )
+
+    assert message_id == "om_schema"
+
+
+def test_update_schema_card_app_bot() -> None:
+    notifier = FeishuNotifier(app_id="a", app_secret="b", chat_id="c")
+    notifier._update_card_via_app_bot = MagicMock(return_value=True)
+
+    ok = notifier.update_schema_card(
+        message_id="om_schema",
+        card={"schema": "2.0", "header": {}, "body": {}},
+    )
+
+    assert ok is True
+    notifier._update_card_via_app_bot.assert_called_once()
+

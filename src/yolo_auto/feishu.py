@@ -132,6 +132,16 @@ class FeishuNotifier:
         )
         return self._update_card_via_app_bot(message_id=message_id, card=card)
 
+    def send_schema_card_with_message_id(self, *, card: dict[str, Any]) -> str | None:
+        if not self._app_bot:
+            return None
+        return self._send_card_via_app_bot_with_message_id(card)
+
+    def update_schema_card(self, *, message_id: str, card: dict[str, Any]) -> bool:
+        if not self._app_bot:
+            return False
+        return self._update_card_via_app_bot(message_id=message_id, card=card)
+
     def _build_interactive_card_payload(self, *, title: str, md_text: str) -> dict:
         return {
             "msg_type": "interactive",

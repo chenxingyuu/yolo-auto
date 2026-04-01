@@ -28,6 +28,129 @@ def _build_mlflow_actions(mlflow_url: str | None) -> list[dict[str, Any]] | None
     ]
 
 
+def _to_percent(progress: float) -> float:
+    return max(0.0, min(100.0, progress * 100.0))
+
+
+def _metric_column(
+    *,
+    value: str,
+    label: str,
+    value_color: str,
+    background_style: str,
+    weight: int = 1,
+) -> dict[str, Any]:
+    return {
+        "tag": "column",
+        "width": "weighted",
+        "weight": weight,
+        "padding": "12px",
+        "vertical_spacing": "2px",
+        "background_style": background_style,
+        "elements": [
+            {
+                "tag": "markdown",
+                "content": f"## <font color='{value_color}'>{value}</font>",
+                "text_align": "center",
+            },
+            {
+                "tag": "markdown",
+                "content": f"<font color='grey'>{label}</font>",
+                "text_align": "center",
+                "text_size": "normal",
+            },
+        ],
+    }
+
+
+def _build_training_schema_card(
+    *,
+    title: str,
+    header_template: str,
+    epoch_text: str,
+    progress: float,
+    elapsed_text: str,
+    eta_text: str,
+    map50: float,
+    map5095: float,
+    recall: float,
+    loss: float,
+) -> dict[str, Any]:
+    progress_pct = _to_percent(progress)
+    return {
+        "schema": "2.0",
+        "header": {
+            "template": header_template,
+            "padding": "12px 12px 12px 12px",
+            "icon": {"tag": "standard_icon", "token": "code", "color": header_template},
+            "title": {"tag": "plain_text", "content": title},
+        },
+        "body": {
+            "elements": [
+                {
+                    "tag": "column_set",
+                    "flex_mode": "stretch",
+                    "horizontal_spacing": "12px",
+                    "margin": "0px",
+                    "columns": [
+                        _metric_column(
+                            value=epoch_text,
+                            label="Epoch",
+                            value_color="blue",
+                            background_style="blue-50",
+                        ),
+                        _metric_column(
+                            value=f"{progress_pct:.1f}%",
+                            label="训练进度",
+                            value_color="blue",
+                            background_style="blue-50",
+                        ),
+                        _metric_column(
+                            value=f"{elapsed_text} / {eta_text}",
+                            label="Elapsed / ETA",
+                            value_color="blue",
+                            background_style="blue-50",
+                            weight=2,
+                        ),
+                    ],
+                },
+                {
+                    "tag": "column_set",
+                    "flex_mode": "stretch",
+                    "horizontal_spacing": "12px",
+                    "margin": "0px",
+                    "columns": [
+                        _metric_column(
+                            value=f"{map50:.3f}",
+                            label="mAP50",
+                            value_color="violet",
+                            background_style="violet-50",
+                        ),
+                        _metric_column(
+                            value=f"{map5095:.3f}",
+                            label="mAP50-95",
+                            value_color="violet",
+                            background_style="violet-50",
+                        ),
+                        _metric_column(
+                            value=f"{recall:.3f}",
+                            label="Recall",
+                            value_color="purple",
+                            background_style="purple-50",
+                        ),
+                        _metric_column(
+                            value=f"{loss:.3f}",
+                            label="Loss",
+                            value_color="purple",
+                            background_style="purple-50",
+                        ),
+                    ],
+                },
+            ]
+        },
+    }
+
+
 def _format_duration(seconds: int) -> str:
     seconds = max(int(seconds), 0)
     hours, rem = divmod(seconds, 3600)
@@ -66,83 +189,6 @@ def _pick_row_for_epoch(rows: list[dict[str, Any]], target_epoch: int) -> dict[s
         else:
             break
     return candidate
-
-
-def _build_state_change_body(
-    *,
-    job_id: str,
-    status_value: str,
-    log_tail: str | None = None,
-) -> str:
-    parts = [
-        "## 任务状态",
-        f"- **Job**: `{job_id}`",
-        f"- **状态**: **{status_value}**",
-    ]
-    if log_tail:
-        parts.extend(
-            [
-                "",
-                "## 错误片段（train.log 尾部）",
-                f"```text\n{log_tail}\n```",
-            ]
-        )
-    return "\n".join(parts)
-
-
-def _build_milestone_body(
-    *,
-    job_id: str,
-    epoch: int,
-    total_epochs: int,
-    progress: float,
-    elapsed_seconds: int,
-    eta_seconds: int | None,
-    primary_metric_key: str,
-    primary_value: float,
-    primary_delta_text: str,
-    loss: float,
-) -> str:
-    eta_text = _format_duration(eta_seconds) if eta_seconds is not None else "n/a"
-    return "\n".join(
-        [
-            "## 训练进度",
-            f"- **Job**: `{job_id}`",
-            f"- **Epoch**: `{epoch}/{total_epochs}`",
-            f"- **Progress**: **{progress * 100:.1f}%**",
-            f"- **Elapsed / ETA**: `{_format_duration(elapsed_seconds)}` / `{eta_text}`",
-            "",
-            "## 关键指标",
-            f"- **{primary_metric_key}**: **{primary_value:.4f}** ({primary_delta_text})",
-            f"- **Loss**: `{loss:.4f}`",
-        ]
-    )
-
-
-def _build_completed_body(
-    *,
-    job_id: str,
-    epoch: int,
-    total_epochs: int,
-    elapsed_seconds: int,
-    loss: float,
-    map5095: float,
-    primary_metric_key: str,
-    primary_value: float,
-) -> str:
-    return "\n".join(
-        [
-            "## 训练结果",
-            f"- **Job**: `{job_id}`",
-            f"- **Epoch**: `{epoch}/{total_epochs}`",
-            f"- **总耗时**: `{_format_duration(elapsed_seconds)}`",
-            "",
-            "## 最终指标",
-            f"- **mAP50-95**: **{map5095:.4f}**",
-            f"- **{primary_metric_key}**: **{primary_value:.4f}**",
-            f"- **Loss**: `{loss:.4f}`",
-        ]
-    )
 
 
 def _generate_loss_map_chart_png_b64(
@@ -233,27 +279,16 @@ def _upsert_training_card(
     now_ts: int,
     state_store: JobStateStore,
     notifier: FeishuNotifier,
-    title: str,
-    md_text: str,
-    header_color: str,
-    actions: list[dict[str, Any]] | None,
+    card: dict[str, Any],
 ):
     if record.feishu_message_id:
-        updated_ok = notifier.update_rich_card(
+        updated_ok = notifier.update_schema_card(
             message_id=record.feishu_message_id,
-            title=title,
-            md_text=md_text,
-            header_color=header_color,  # type: ignore[arg-type]
-            actions=actions,
+            card=card,
         )
         if updated_ok:
             return record
-    new_message_id = notifier.send_rich_card_with_message_id(
-        title=title,
-        md_text=md_text,
-        header_color=header_color,  # type: ignore[arg-type]
-        actions=actions,
-    )
+    new_message_id = notifier.send_schema_card_with_message_id(card=card)
     if not new_message_id:
         return record
     return state_store.mark_feishu_message(record.job_id, new_message_id, now_ts)
@@ -301,23 +336,24 @@ def get_status(
         failed = "error" in log_content.lower() or "traceback" in log_content.lower()
         target = JobStatus.FAILED if failed else JobStatus.COMPLETED
         updated = state_store.update_status(job_id, target, now)
-        title = "[YOLO] 状态变更"
-        mlflow_url = tracker.get_run_url(effective_run_id)
-        header_color = "red" if target == JobStatus.FAILED else "green"
-        body = _build_state_change_body(
-            job_id=job_id,
-            status_value=target.value,
-            log_tail=log_content.strip() if target == JobStatus.FAILED else None,
+        card = _build_training_schema_card(
+            title="YOLO模型训练失败" if target == JobStatus.FAILED else "YOLO模型训练完成",
+            header_template="red" if target == JobStatus.FAILED else "green",
+            epoch_text="--/--",
+            progress=1.0,
+            elapsed_text="n/a",
+            eta_text="n/a",
+            map50=0.0,
+            map5095=0.0,
+            recall=0.0,
+            loss=0.0,
         )
         updated = _upsert_training_card(
             record=updated,
             now_ts=now,
             state_store=state_store,
             notifier=notifier,
-            title=title,
-            md_text=body,
-            header_color=header_color,
-            actions=_build_mlflow_actions(mlflow_url),
+            card=card,
         )
         if updated.last_notified_state != target:
             state_store.mark_notified(job_id, target, now)
@@ -377,26 +413,16 @@ def get_status(
 
     if process_alive and feishu_report_enable:
         if epoch > 0:
-            title = "[YOLO] 训练里程碑"
-            mlflow_url = tracker.get_run_url(effective_run_id)
-            previous_metric_text = "n/a"
-            prev_row = _pick_row_for_epoch(rows, record.last_reported_epoch)
-            if prev_row is not None:
-                prev_parsed = parse_training_row(prev_row)
-                prev_primary = float(
-                    metric_value_from_parsed(prev_parsed, primary_metric_key)
-                )
-                previous_metric_text = _format_signed(primary_value - prev_primary)
-            body = _build_milestone_body(
-                job_id=job_id,
-                epoch=epoch,
-                total_epochs=total_epochs,
+            card = _build_training_schema_card(
+                title="YOLO模型训练里程碑",
+                header_template="blue",
+                epoch_text=f"{epoch}/{total_epochs}",
                 progress=progress,
-                elapsed_seconds=elapsed_seconds,
-                eta_seconds=eta_seconds,
-                primary_metric_key=primary_metric_key,
-                primary_value=float(primary_value),
-                primary_delta_text=previous_metric_text,
+                elapsed_text=_format_duration(elapsed_seconds),
+                eta_text=_format_duration(eta_seconds) if eta_seconds is not None else "n/a",
+                map50=map50,
+                map5095=map5095,
+                recall=recall,
                 loss=loss,
             )
             record = _upsert_training_card(
@@ -404,10 +430,7 @@ def get_status(
                 now_ts=now,
                 state_store=state_store,
                 notifier=notifier,
-                title=title,
-                md_text=body,
-                header_color="blue",
-                actions=_build_mlflow_actions(mlflow_url),
+                card=card,
             )
             if epoch > record.last_reported_epoch:
                 record = state_store.mark_milestone_epoch(job_id, epoch, now)
@@ -415,27 +438,24 @@ def get_status(
     if not process_alive:
         updated = state_store.update_status(job_id, JobStatus.COMPLETED, now)
         tracker.finish_run(effective_run_id, updated.paths.get("bestPath"))
-        title = "[YOLO] 任务完成"
-        mlflow_url = tracker.get_run_url(effective_run_id)
-        body = _build_completed_body(
-            job_id=job_id,
-            epoch=epoch,
-            total_epochs=total_epochs,
-            elapsed_seconds=elapsed_seconds,
-            loss=loss,
+        card = _build_training_schema_card(
+            title="YOLO模型训练完成",
+            header_template="green",
+            epoch_text=f"{epoch}/{total_epochs}",
+            progress=1.0,
+            elapsed_text=_format_duration(elapsed_seconds),
+            eta_text="0s",
+            map50=map50,
             map5095=map5095,
-            primary_metric_key=primary_metric_key,
-            primary_value=float(primary_value),
+            recall=recall,
+            loss=loss,
         )
         updated = _upsert_training_card(
             record=updated,
             now_ts=now,
             state_store=state_store,
             notifier=notifier,
-            title=title,
-            md_text=body,
-            header_color="green",
-            actions=_build_mlflow_actions(mlflow_url),
+            card=card,
         )
         if updated.last_notified_state != JobStatus.COMPLETED:
             state_store.mark_notified(job_id, JobStatus.COMPLETED, now)

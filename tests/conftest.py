@@ -26,6 +26,8 @@ def mock_notifier() -> MagicMock:
     notifier.send_training_update.return_value = None
     notifier.send_rich_card_with_message_id.return_value = None
     notifier.update_rich_card.return_value = False
+    notifier.send_schema_card_with_message_id.return_value = None
+    notifier.update_schema_card.return_value = False
     return notifier
 
 

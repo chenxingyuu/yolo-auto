@@ -99,7 +99,7 @@ def test_get_status_running_with_metrics(
 
     mock_ssh.execute.return_value = (CSV_CONTENT, "", 0)
     mock_ssh.process_alive.return_value = True
-    mock_notifier.send_rich_card_with_message_id.return_value = "om_1"
+    mock_notifier.send_schema_card_with_message_id.return_value = "om_1"
 
     result = get_status(
         job_id="job-1",
@@ -164,7 +164,7 @@ def test_get_status_milestone_message_contains_eta_and_delta(
 
     mock_ssh.execute.return_value = (CSV_CONTENT_EPOCH5, "", 0)
     mock_ssh.process_alive.return_value = True
-    mock_notifier.send_rich_card_with_message_id.return_value = "om_new"
+    mock_notifier.send_schema_card_with_message_id.return_value = "om_new"
 
     result = get_status(
         job_id="job-2",
@@ -179,13 +179,12 @@ def test_get_status_milestone_message_contains_eta_and_delta(
 
     assert result["ok"] is True
     assert result["status"] == JobStatus.RUNNING.value
-    mock_notifier.send_rich_card_with_message_id.assert_called_once()
-    kwargs = mock_notifier.send_rich_card_with_message_id.call_args.kwargs
-    assert kwargs["title"] == "[YOLO] 训练里程碑"
-    assert "**Progress**:" in kwargs["md_text"]
-    assert "**Elapsed / ETA**:" in kwargs["md_text"]
-    assert "**map5095**:" in kwargs["md_text"]
-    assert "(+" in kwargs["md_text"] or "(-" in kwargs["md_text"] or "(n/a" in kwargs["md_text"]
+    mock_notifier.send_schema_card_with_message_id.assert_called_once()
+    kwargs = mock_notifier.send_schema_card_with_message_id.call_args.kwargs
+    card = kwargs["card"]
+    assert card["schema"] == "2.0"
+    assert card["header"]["title"]["content"] == "YOLO模型训练里程碑"
+    assert card["body"]["elements"][0]["tag"] == "column_set"
 
 
 def test_get_status_updates_existing_card_then_no_resend(
@@ -200,7 +199,7 @@ def test_get_status_updates_existing_card_then_no_resend(
 
     mock_ssh.execute.return_value = (CSV_CONTENT_EPOCH5, "", 0)
     mock_ssh.process_alive.return_value = True
-    mock_notifier.update_rich_card.return_value = True
+    mock_notifier.update_schema_card.return_value = True
 
     result = get_status(
         job_id="job-3",
@@ -213,8 +212,8 @@ def test_get_status_updates_existing_card_then_no_resend(
     )
 
     assert result["ok"] is True
-    mock_notifier.update_rich_card.assert_called_once()
-    mock_notifier.send_rich_card_with_message_id.assert_not_called()
+    mock_notifier.update_schema_card.assert_called_once()
+    mock_notifier.send_schema_card_with_message_id.assert_not_called()
 
 
 def test_get_status_fallback_resend_when_update_fails(
@@ -229,8 +228,8 @@ def test_get_status_fallback_resend_when_update_fails(
 
     mock_ssh.execute.return_value = (CSV_CONTENT_EPOCH5, "", 0)
     mock_ssh.process_alive.return_value = True
-    mock_notifier.update_rich_card.return_value = False
-    mock_notifier.send_rich_card_with_message_id.return_value = "om_new"
+    mock_notifier.update_schema_card.return_value = False
+    mock_notifier.send_schema_card_with_message_id.return_value = "om_new"
 
     result = get_status(
         job_id="job-4",
