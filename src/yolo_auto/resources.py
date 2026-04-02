@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Callable
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
 from yolo_auto.config import Settings
-from yolo_auto.cvat_client import CVATClient
 from yolo_auto.models import JobStatus
 from yolo_auto.ssh_client import SSHClient
 from yolo_auto.state_store import JobStateStore
@@ -21,7 +19,6 @@ def register_resources(
     ssh_clients_by_env: dict[str, SSHClient],
     state_store: JobStateStore,
     tracker: MLflowTracker,
-    cvat_client_factory: Callable[[], CVATClient] | None = None,
 ) -> None:
     """Register MCP Resources for read-only background context."""
 
@@ -408,82 +405,6 @@ def register_resources(
 - **训练慢**: 使用 cache=ram、增大 batch、用更小模型先验证
 """
 
-    @mcp.resource(
-        "yolo://cvat/projects",
-        name="cvat-projects",
-        description="CVAT 项目列表（需配置 CVAT_URL/CVAT_TOKEN）。",
-        mime_type="application/json",
-    )
-    def resource_cvat_projects() -> str:
-        client = _safe_get_cvat_client(cvat_client_factory)
-        if client is None:
-            return json.dumps(
-                {
-                    "ok": False,
-                    "error": "CVAT is not configured",
-                    "hint": "请设置 CVAT_URL、CVAT_TOKEN",
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-        try:
-            projects = client.list_projects()
-        except Exception as exc:
-            return json.dumps(
-                {"ok": False, "error": str(exc)},
-                ensure_ascii=False,
-                indent=2,
-            )
-        return json.dumps(
-            {"ok": True, "projects": projects, "count": len(projects)},
-            ensure_ascii=False,
-            indent=2,
-        )
-
-    @mcp.resource(
-        "yolo://cvat/tasks",
-        name="cvat-tasks",
-        description="CVAT 任务列表（需配置 CVAT_URL/CVAT_TOKEN）。",
-        mime_type="application/json",
-    )
-    def resource_cvat_tasks() -> str:
-        client = _safe_get_cvat_client(cvat_client_factory)
-        if client is None:
-            return json.dumps(
-                {
-                    "ok": False,
-                    "error": "CVAT is not configured",
-                    "hint": "请设置 CVAT_URL、CVAT_TOKEN",
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-        try:
-            tasks = client.list_tasks()
-        except Exception as exc:
-            return json.dumps(
-                {"ok": False, "error": str(exc)},
-                ensure_ascii=False,
-                indent=2,
-            )
-        return json.dumps(
-            {"ok": True, "tasks": tasks, "count": len(tasks)},
-            ensure_ascii=False,
-            indent=2,
-        )
-
-
-def _safe_get_cvat_client(
-    cvat_client_factory: Callable[[], CVATClient] | None,
-) -> CVATClient | None:
-    if cvat_client_factory is None:
-        return None
-    try:
-        client = cvat_client_factory()
-    except Exception:
-        return None
-    if not isinstance(client, CVATClient):
-        return None
-    return client
+    # CVAT 相关资源已迁移到独立服务 cvat-mcp（使用 cvat:// 前缀）。
 
 

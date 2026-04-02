@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from yolo_auto.tools.dataset import export_and_sync_cvat_dataset
 from yolo_auto.tools.sync import sync_dataset
 
 
@@ -100,38 +99,3 @@ def test_sync_dataset_accepts_exports_prefixed_filename(mock_ssh: MagicMock) -> 
 
     assert result["ok"] is True
     assert result["source"] == "minio/cvat-export/exports/task8-20260327075925.zip"
-
-
-def test_export_and_sync_success(mock_ssh: MagicMock) -> None:
-    cvat_client = MagicMock()
-    cvat_client.export_task_dataset_to_cloud.return_value = "rq-t"
-    cvat_client.get_request.side_effect = [
-        {"status": {"value": "queued"}},
-        {"status": {"value": "finished"}},
-    ]
-    mock_ssh.execute.side_effect = [
-        ("", "", 0),  # command -v mc
-        ("", "", 0),  # command -v unzip
-        ("", "", 0),  # mc stat
-        ("", "", 0),  # sync command
-        ("data.yaml\n", "", 0),  # detect data yaml
-        ("./data.yaml\n", "", 0),  # list files
-    ]
-
-    result = export_and_sync_cvat_dataset(
-        cvat_client,
-        mock_ssh,
-        task_id=8,
-        dataset_name="task8_sync",
-        include_images=True,
-        cloud_storage_id=1,
-        poll_seconds=0.01,
-        max_wait_seconds=30.0,
-        minio_alias="minio",
-        minio_bucket="cvat-export",
-        minio_prefix="exports",
-        datasets_dir="/workspace/datasets",
-    )
-
-    assert result["ok"] is True
-    assert result["sync"]["dataConfigPath"] == "/workspace/datasets/task8_sync/data.yaml"

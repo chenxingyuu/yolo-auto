@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """向当前飞书群发送一张「训练里程碑」样式 Schema 2.0 卡片（合成折线图 + 三列指标区）。
 
 仅用于本地预览。请在项目根目录配置 `.env`（FEISHU_APP_ID / FEISHU_APP_SECRET / FEISHU_CHAT_ID 等）。
