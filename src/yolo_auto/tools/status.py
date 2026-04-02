@@ -74,6 +74,10 @@ def _training_rows_to_chart_spec(
         "yField": "value",
         "seriesField": "series",
         "legends": {"visible": True, "orient": "bottom"},
+        # 关闭折线点/圆点显示，避免在点较多时视觉拥挤
+        "point": {"visible": False},
+        # 关闭点/折线的数值标签（如在点上显示 value 文本）
+        "label": {"visible": False},
     }
 
 

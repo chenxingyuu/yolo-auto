@@ -10,8 +10,8 @@ from yolo_auto.feishu import FeishuNotifier
 from yolo_auto.models import JobStatus
 from yolo_auto.ssh_client import SSHClient
 from yolo_auto.state_store import JobStateStore
-from yolo_auto.tools.status import get_status
 from yolo_auto.tools.mlflow_grouping import mlflow_filter_same_training_scope
+from yolo_auto.tools.status import get_status
 from yolo_auto.tools.training import TrainRequest, start_training
 from yolo_auto.tracker import MLflowTracker
 

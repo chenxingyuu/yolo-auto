@@ -112,7 +112,8 @@ def register_resources(
         name="mlflow-leaderboard",
         description=(
             "MLflow 实验中按主指标排序的 Top 10 runs；"
-            "可选环境变量 MLFLOW_LEADERBOARD_FILTER（MLflow search_runs 的 filter_string 语法）缩小范围。"
+            "可选环境变量 MLFLOW_LEADERBOARD_FILTER（MLflow search_runs 的 "
+            "filter_string 语法）缩小范围。"
         ),
         mime_type="application/json",
     )

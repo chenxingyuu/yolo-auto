@@ -40,6 +40,7 @@ class JobRecord:
     env_id: str = "default"
     last_notified_state: JobStatus | None = None
     feishu_message_id: str | None = None
+    train_params: dict[str, Any] | None = None
     last_metrics_at: int | None = None
     train_epochs: int | None = None
     last_reported_epoch: int = 0
@@ -58,6 +59,7 @@ class JobRecord:
                 self.last_notified_state.value if self.last_notified_state else None
             ),
             "feishuMessageId": self.feishu_message_id,
+            "trainParams": self.train_params,
             "lastMetricsAt": self.last_metrics_at,
             "trainEpochs": self.train_epochs,
             "lastReportedEpoch": self.last_reported_epoch,
@@ -79,6 +81,9 @@ class JobRecord:
             last_notified_state=JobStatus(last_notified) if last_notified else None,
             feishu_message_id=(
                 str(data["feishuMessageId"]) if data.get("feishuMessageId") else None
+            ),
+            train_params=(
+                dict(data["trainParams"]) if isinstance(data.get("trainParams"), dict) else None
             ),
             last_metrics_at=int(data["lastMetricsAt"]) if data.get("lastMetricsAt") else None,
             train_epochs=int(train_epochs_raw) if train_epochs_raw is not None else None,
