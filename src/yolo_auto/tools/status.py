@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import csv
+import logging
 import time
 from io import BytesIO, StringIO
 from typing import Any
@@ -13,6 +14,8 @@ from yolo_auto.ssh_client import SSHClient
 from yolo_auto.state_store import JobStateStore
 from yolo_auto.tools.metrics_csv import metric_value_from_parsed, parse_training_row
 from yolo_auto.tracker import MLflowTracker
+
+logger = logging.getLogger(__name__)
 
 
 def _build_mlflow_actions(mlflow_url: str | None) -> list[dict[str, Any]] | None:
@@ -76,6 +79,7 @@ def _build_training_schema_card(
     recall: float,
     loss: float,
     updated_time_text: str,
+    actions: list[dict[str, Any]] | None = None,
     top_img_key: str | None = None,
     top_img_fallback_key: str | None = None,
 ) -> dict[str, Any]:
@@ -86,7 +90,6 @@ def _build_training_schema_card(
             "tag": "img",
             "img_key": top_img_key,
             "alt": {"tag": "plain_text", "content": "training cover"},
-            "scale_type": "fit_horizontal",
         }
         if top_img_fallback_key:
             image_element["fallback_img_key"] = top_img_fallback_key
@@ -159,6 +162,13 @@ def _build_training_schema_card(
             },
         ]
     )
+    if actions:
+        elements.append(
+            {
+                "tag": "action",
+                "actions": actions,
+            }
+        )
     return {
         "schema": "2.0",
         "header": {
@@ -312,8 +322,18 @@ def _upsert_training_card(
         )
         if updated_ok:
             return record
+        logger.warning(
+            "Feishu card update failed, fallback to resend: job_id=%s message_id=%s",
+            record.job_id,
+            record.feishu_message_id,
+        )
     new_message_id = notifier.send_schema_card_with_message_id(card=card)
     if not new_message_id:
+        logger.warning(
+            "Feishu card send failed: job_id=%s has_existing_message=%s",
+            record.job_id,
+            bool(record.feishu_message_id),
+        )
         return record
     return state_store.mark_feishu_message(record.job_id, new_message_id, now_ts)
 
@@ -344,6 +364,7 @@ def get_status(
         )
 
     effective_run_id = record.run_id or run_id
+    mlflow_url = tracker.get_run_url(effective_run_id)
     metrics_path = record.paths.get("metricsPath", "")
     content, stderr_text, exit_code = ssh_client.execute(f"cat {metrics_path}")
     if exit_code != 0:
@@ -374,6 +395,7 @@ def get_status(
             recall=0.0,
             loss=0.0,
             updated_time_text=_format_card_timestamp(now),
+            actions=_build_mlflow_actions(mlflow_url),
             top_img_key=feishu_card_img_key,
             top_img_fallback_key=feishu_card_fallback_img_key,
         )
@@ -454,6 +476,7 @@ def get_status(
                 recall=recall,
                 loss=loss,
                 updated_time_text=_format_card_timestamp(now),
+                actions=_build_mlflow_actions(mlflow_url),
                 top_img_key=feishu_card_img_key,
                 top_img_fallback_key=feishu_card_fallback_img_key,
             )
@@ -482,6 +505,7 @@ def get_status(
             recall=recall,
             loss=loss,
             updated_time_text=_format_card_timestamp(now),
+            actions=_build_mlflow_actions(mlflow_url),
             top_img_key=feishu_card_img_key,
             top_img_fallback_key=feishu_card_fallback_img_key,
         )

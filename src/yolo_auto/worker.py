@@ -27,6 +27,7 @@ from __future__ import annotations
 # - 或回退使用 `YOLO_SSH_HOST` / `YOLO_SSH_PORT` / `YOLO_SSH_USER`
 #   / `YOLO_SSH_KEY_PATH`（作为 `default` 环境）
 import fcntl
+import logging
 import time
 from pathlib import Path
 from types import TracebackType
@@ -38,6 +39,8 @@ from yolo_auto.ssh_client import SSHClient, SSHConfig
 from yolo_auto.state_store import JobStateStore
 from yolo_auto.tools.status import get_status
 from yolo_auto.tracker import MLflowTracker, TrackerConfig
+
+logger = logging.getLogger(__name__)
 
 
 class LockFile:
@@ -63,6 +66,10 @@ class LockFile:
 
 def main() -> None:
     """轮询本地任务状态，并对 `RUNNING` 任务执行 `get_status(...)`。"""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+    )
     settings = load_settings()
     ssh_by_env: dict[str, SSHClient] = {}
     for env_id, ssh_env in settings.yolo_ssh_envs.items():
@@ -96,19 +103,32 @@ def main() -> None:
                 if job.status != JobStatus.RUNNING:
                     continue
                 ssh_client = ssh_by_env.get(job.env_id, ssh_default)
-                get_status(
-                    job.job_id,
-                    job.run_id,
-                    store,
-                    ssh_client,
-                    tracker,
-                    notifier,
-                    feishu_report_enable=settings.feishu_report_enable,
-                    feishu_report_every_n_epochs=settings.feishu_report_every_n_epochs,
-                    primary_metric_key=settings.primary_metric_key,
-                    feishu_card_img_key=settings.feishu_card_img_key,
-                    feishu_card_fallback_img_key=settings.feishu_card_fallback_img_key,
-                )
+                try:
+                    result = get_status(
+                        job.job_id,
+                        job.run_id,
+                        store,
+                        ssh_client,
+                        tracker,
+                        notifier,
+                        feishu_report_enable=settings.feishu_report_enable,
+                        feishu_report_every_n_epochs=settings.feishu_report_every_n_epochs,
+                        primary_metric_key=settings.primary_metric_key,
+                        feishu_card_img_key=settings.feishu_card_img_key,
+                        feishu_card_fallback_img_key=settings.feishu_card_fallback_img_key,
+                    )
+                    if not bool(result.get("ok", True)):
+                        logger.warning(
+                            "get_status failed for job_id=%s: errorCode=%s message=%s",
+                            job.job_id,
+                            result.get("errorCode"),
+                            result.get("error"),
+                        )
+                except Exception:
+                    logger.exception(
+                        "Unhandled error when polling status for job_id=%s",
+                        job.job_id,
+                    )
         time.sleep(settings.watch_poll_interval_seconds)
 
 

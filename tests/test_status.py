@@ -185,7 +185,11 @@ def test_get_status_milestone_message_contains_eta_and_delta(
     assert card["schema"] == "2.0"
     assert card["header"]["title"]["content"] == "YOLO模型训练里程碑"
     assert card["body"]["elements"][0]["tag"] == "column_set"
-    assert "更新时间：" in card["body"]["elements"][-1]["content"]
+    assert any(
+        "更新时间：" in str(element.get("content", ""))
+        for element in card["body"]["elements"]
+        if isinstance(element, dict)
+    )
 
 
 def test_get_status_card_supports_configurable_top_image(
@@ -218,7 +222,11 @@ def test_get_status_card_supports_configurable_top_image(
     assert card["body"]["elements"][0]["tag"] == "img"
     assert card["body"]["elements"][0]["img_key"] == "img_v3_demo"
     assert card["body"]["elements"][0]["fallback_img_key"] == "img_v3_fb"
-    assert "更新时间：" in card["body"]["elements"][-1]["content"]
+    assert any(
+        "更新时间：" in str(element.get("content", ""))
+        for element in card["body"]["elements"]
+        if isinstance(element, dict)
+    )
 
 
 def test_get_status_updates_existing_card_then_no_resend(
