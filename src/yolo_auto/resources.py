@@ -372,7 +372,7 @@ def register_resources(
 | epochs | epochs | int | 50–300 | 小数据集 100+, 大数据集 50–150 |
 | imgSize | imgsz | int | 320–1280 | 640 为平衡点, 精度优先用 1280 |
 | batch | batch | int/float | 8–64 / 0.6–0.9 | 显存允许尽量大; 小数为自动显存比 |
-| learningRate | lr0 | float | 0.001–0.02 | SGD 常用 0.01, AdamW 常用 0.001 |
+| learningRate | lr0 | float 可选 | 0.001–0.02 | 不传不写 lr0，用框架默认；要手动调参时再传 |
 
 ## 常用可选参数
 | 参数 | CLI 名 | 默认 | 建议 |

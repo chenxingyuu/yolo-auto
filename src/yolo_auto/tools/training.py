@@ -24,7 +24,7 @@ class TrainRequest:
     epochs: int
     img_size: int
     batch: int | float
-    learning_rate: float
+    learning_rate: float | None
     work_dir: str
     jobs_dir: str
     env_id: str = "default"
@@ -63,7 +63,8 @@ _START_CARD_ROW2_KEYS = frozenset({"optimizer", "device", "workers", "patience",
 
 _OPTIMIZER_AUTO_NOTICE = (
     "提示：optimizer=auto 时 Ultralytics 会忽略命令行中的 lr0、momentum 等，"
-    "由训练器自动选定优化器与学习率；卡片上的 lr0 仅为传入值，实际以 train.log 为准。"
+    "由训练器自动选定优化器与学习率；若未传 learningRate 则未写 lr0，"
+    "卡片 lr0 列为占位；实际数值以 train.log 为准。"
 )
 
 
@@ -149,27 +150,30 @@ def start_training(
         model_path=req.model,
         data_config_path=req.data_config_path,
     )
+    mlflow_cfg: dict[str, Any] = {
+        "env_id": req.env_id,
+        "model": req.model,
+        "data_config_path": req.data_config_path,
+        "epochs": req.epochs,
+        "img_size": req.img_size,
+        "batch": req.batch,
+    }
+    if req.learning_rate is not None:
+        mlflow_cfg["learning_rate"] = req.learning_rate
+    mlflow_cfg.update(req.extra_args or {})
     run_id = tracker.start_run(
         job_id=req.job_id,
-        config={
-            "env_id": req.env_id,
-            "model": req.model,
-            "data_config_path": req.data_config_path,
-            "epochs": req.epochs,
-            "img_size": req.img_size,
-            "batch": req.batch,
-            "learning_rate": req.learning_rate,
-            **(req.extra_args or {}),
-        },
+        config=mlflow_cfg,
         tags=group_tags,
     )
     job_dir = f"{req.jobs_dir}/{req.job_id}"
     log_path = f"{job_dir}/train.log"
     extra_cli_args = _build_extra_cli_args(req.extra_args)
+    lr_cli = f" lr0={req.learning_rate}" if req.learning_rate is not None else ""
     train_cmd = (
         f"mkdir -p {job_dir} && cd {req.work_dir} && "
         f"yolo detect train model={req.model} data={req.data_config_path} "
-        f"epochs={req.epochs} imgsz={req.img_size} batch={req.batch} lr0={req.learning_rate} "
+        f"epochs={req.epochs} imgsz={req.img_size} batch={req.batch}{lr_cli} "
         # Ultralytics 默认会在目标目录已存在时自动给 name 追加数字后缀（如 xxx2）。
         # 我们这里会先 mkdir job_dir 以写入 train.log，因此显式设置 exist_ok=True，
         # 避免保存目录与 MCP 记录的 jobDir 不一致导致 results.csv 读取失败。
@@ -211,7 +215,7 @@ def start_training(
     fourth_label, fourth_val = _fourth_metric_for_start_card(req.extra_args)
     optimizer_auto = _is_optimizer_auto(req.extra_args)
     training_hints = [_OPTIMIZER_AUTO_NOTICE] if optimizer_auto else []
-    lr_text = f"{req.learning_rate:g}"
+    lr_text = f"{req.learning_rate:g}" if req.learning_rate is not None else ""
     if isinstance(req.batch, float) and req.batch == int(req.batch):
         batch_text = str(int(req.batch))
     else:

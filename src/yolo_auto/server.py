@@ -764,15 +764,18 @@ def yolo_start_training(
         ),
     ],
     learningRate: Annotated[
-        float,
+        float | None,
         Field(
+            default=None,
             gt=0,
             description=(
-                "初始学习率，对应远程命令中的 lr0=。"
-                "若 optimizer=auto，Ultralytics 通常会忽略该 lr0，由 auto 流程另行决定学习率。"
+                "可选。对应远程 lr0=；不传则不写 lr0，由 Ultralytics 按默认优化器/学习率训练"
+                "（适合未指定 optimizer、沿用框架默认时）。"
+                "需要手动固定学习率时再传。"
+                "optimizer=auto 时即使传入也常被忽略。"
             ),
         ),
-    ],
+    ] = None,
     device: Annotated[
         str | int | list[Any] | None,
         Field(
@@ -801,7 +804,8 @@ def yolo_start_training(
         Field(
             default=None,
             description=(
-                "优化器名（如 SGD、AdamW、auto 等），对应 optimizer=。"
+                "优化器名（如 SGD、AdamW、auto 等），对应 optimizer=；不传则用 Ultralytics 默认。"
+                "未传 optimizer 时 learningRate 也可不传。"
                 "设为 auto 时 Ultralytics 会忽略 lr0、momentum 等，自动选择优化器与超参。"
             ),
         ),
@@ -941,6 +945,7 @@ def yolo_start_training(
     会创建 MLflow run、写入本地任务状态、并可能发送飞书「训练已启动」通知。
     成功时返回含 jobId、runId、status、paths（日志与权重路径提示）等；
     重复启动同 job 且仍在队列/运行中会直接返回已有记录。
+    learningRate 可选：不传时不写 lr0，与未指定 optimizer 时沿用 Ultralytics 默认学习率。
     """
     resolved_job_id = resolve_job_id(
         jobId,

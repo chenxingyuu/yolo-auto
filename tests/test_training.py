@@ -22,6 +22,25 @@ def _make_req(job_id: str) -> TrainRequest:
     )
 
 
+def test_start_training_omits_lr0_without_learning_rate(
+    mock_ssh: MagicMock,
+    mock_notifier: MagicMock,
+    mock_tracker: MagicMock,
+    state_store,
+) -> None:
+    mock_ssh.execute.return_value = ("", "", 0)
+    mock_ssh.execute_background.return_value = ("12345", 0)
+
+    req = replace(_make_req("job-no-lr"), learning_rate=None)
+    result = start_training(req, mock_ssh, mock_notifier, mock_tracker, state_store)
+
+    assert result["ok"] is True
+    cmd = mock_ssh.execute_background.call_args[0][0]
+    assert "lr0=" not in cmd
+    cfg = mock_tracker.start_run.call_args.kwargs["config"]
+    assert "learning_rate" not in cfg
+
+
 def test_start_training_optimizer_auto_hints(
     mock_ssh: MagicMock,
     mock_notifier: MagicMock,
@@ -68,6 +87,7 @@ def test_start_training_success(
     assert call_kw["tags"]["yolo_source"] == "yolo_auto.training"
     assert call_kw["config"]["env_id"] == "default"
     mock_ssh.execute_background.assert_called_once()
+    assert "lr0=0.01" in mock_ssh.execute_background.call_args[0][0]
     mock_notifier.send_schema_card_with_message_id.assert_called_once()
     kwargs = mock_notifier.send_schema_card_with_message_id.call_args.kwargs
     card = kwargs["card"]
