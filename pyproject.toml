@@ -9,6 +9,7 @@ dependencies = [
     "mcp>=1.6.0",
     "mlflow==3.10.1",
     "paramiko>=3.5.1",
+    "PyYAML>=6.0",
     "python-dotenv>=1.1.0",
     "pydantic>=2.11.2",
 ]

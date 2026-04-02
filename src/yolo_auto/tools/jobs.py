@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import csv
+import shlex
+import time
 from io import StringIO
 from typing import Any
+
+import yaml
 
 from yolo_auto.errors import err, ok
 from yolo_auto.feishu import FeishuNotifier
@@ -102,6 +106,42 @@ def get_job(
             feishu_card_fallback_img_key=feishu_card_fallback_img_key,
         )
         payload["liveStatus"] = status_payload
+        refreshed = state_store.get(job_id) or record
+        payload["record"] = refreshed.to_dict()
+        job_dir = refreshed.paths.get("jobDir", "").strip()
+        if job_dir:
+            args_path = f"{job_dir.rstrip('/')}/args.yaml"
+            try:
+                stdout, _, code = ssh_client.execute(f"cat {shlex.quote(args_path)}")
+            except Exception:
+                stdout, code = "", 1
+            if code == 0 and stdout.strip():
+                try:
+                    parsed = yaml.safe_load(stdout)
+                except Exception:
+                    parsed = None
+                if isinstance(parsed, dict):
+                    parsed_dict = dict(parsed)
+                    if refreshed.train_params != parsed_dict:
+                        now = int(time.time())
+                        updated = JobRecord(
+                            job_id=refreshed.job_id,
+                            run_id=refreshed.run_id,
+                            status=refreshed.status,
+                            pid=refreshed.pid,
+                            paths=refreshed.paths,
+                            created_at=refreshed.created_at,
+                            updated_at=now,
+                            env_id=refreshed.env_id,
+                            last_notified_state=refreshed.last_notified_state,
+                            feishu_message_id=refreshed.feishu_message_id,
+                            train_params=parsed_dict,
+                            last_metrics_at=refreshed.last_metrics_at,
+                            train_epochs=refreshed.train_epochs,
+                            last_reported_epoch=refreshed.last_reported_epoch,
+                        )
+                        state_store.upsert(updated)
+                        payload["record"] = updated.to_dict()
     return ok(payload)
 
 
