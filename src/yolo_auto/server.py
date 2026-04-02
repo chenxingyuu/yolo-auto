@@ -6,7 +6,7 @@ from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from starlette.responses import PlainTextResponse
 
 from yolo_auto.config import load_settings
@@ -730,42 +730,98 @@ def yolo_sync_dataset(
     )
 
 
+def _camel_or_snake_field(
+    camel: str,
+    snake: str,
+    **kwargs: Any,
+) -> Any:
+    """JSON 入参兼容 camelCase（与 MCP schema 一致）与常见 snake_case。"""
+    return Field(validation_alias=AliasChoices(camel, snake), **kwargs)
+
+
+def _collect_missing_yolo_start_training_args(
+    *,
+    model: str | None,
+    data_config_path: str | None,
+    epochs: int | None,
+    img_size: int | None,
+    batch: int | float | None,
+) -> list[str]:
+    missing: list[str] = []
+    if model is None or not str(model).strip():
+        missing.append("model")
+    if data_config_path is None or not str(data_config_path).strip():
+        missing.append("dataConfigPath")
+    if epochs is None:
+        missing.append("epochs")
+    if img_size is None:
+        missing.append("imgSize")
+    if batch is None:
+        missing.append("batch")
+    return missing
+
+
 @mcp.tool(name="yolo_start_training")
 def yolo_start_training(
     model: Annotated[
-        str,
+        str | None,
         Field(
+            default=None,
             description=(
-                "模型：可为预训练权重路径（.pt）、模型结构 YAML（.yaml），"
+                "必填（成功启动训练时）。模型：可为预训练权重路径（.pt）、模型结构 YAML（.yaml），"
                 "可配合顶层 pretrained 或 extraArgs 控制是否加载预训练。"
             ),
         ),
-    ],
+    ] = None,
     dataConfigPath: Annotated[
-        str,
-        Field(description="Ultralytics 数据集配置 YAML 路径（远程工作目录下可读）。"),
-    ],
-    epochs: Annotated[
-        int,
-        Field(gt=0, description="训练轮数；写入远程 yolo 命令的 epochs=。"),
-    ],
-    imgSize: Annotated[
-        int,
-        Field(gt=0, description="训练输入边长 imgsz=（正方形缩放，与 Ultralytics 一致）。"),
-    ],
-    batch: Annotated[
-        int | float,
-        Field(
-            gt=0,
+        str | None,
+        _camel_or_snake_field(
+            "dataConfigPath",
+            "data_config_path",
+            default=None,
             description=(
-                "批次：正整数为固定大小；正小数（如 0.7）在支持的 Ultralytics 中"
-                "表示显存占用比例。"
+                "必填（成功启动训练时）。Ultralytics 数据集配置 YAML 路径"
+                "（远程工作目录下可读）。"
             ),
         ),
-    ],
+    ] = None,
+    epochs: Annotated[
+        int | None,
+        Field(
+            default=None,
+            gt=0,
+            description="必填（成功启动训练时）。训练轮数；写入远程 yolo 命令的 epochs=。",
+        ),
+    ] = None,
+    imgSize: Annotated[
+        int | None,
+        _camel_or_snake_field(
+            "imgSize",
+            "img_size",
+            default=None,
+            gt=0,
+            description=(
+                "必填（成功启动训练时）。训练输入边长 imgsz=（正方形缩放，"
+                "与 Ultralytics 一致）。"
+            ),
+        ),
+    ] = None,
+    batch: Annotated[
+        int | float | None,
+        Field(
+            default=None,
+            gt=0,
+            description=(
+                "必填（成功启动训练时）。批次：正整数为固定大小；"
+                "正小数（如 0.7）在支持的 Ultralytics 中表示显存占用比例。"
+            ),
+        ),
+    ] = None,
     learningRate: Annotated[
         float | None,
-        Field(
+        _camel_or_snake_field(
+            "learningRate",
+            "learning_rate",
             default=None,
             gt=0,
             description=(
@@ -840,7 +896,9 @@ def yolo_start_training(
     ] = None,
     cosLr: Annotated[
         bool | None,
-        Field(
+        _camel_or_snake_field(
+            "cosLr",
+            "cos_lr",
             default=None,
             description="是否使用余弦学习率调度，对应 cos_lr=。",
         ),
@@ -882,7 +940,9 @@ def yolo_start_training(
     ] = None,
     closeMosaic: Annotated[
         int | None,
-        Field(
+        _camel_or_snake_field(
+            "closeMosaic",
+            "close_mosaic",
             default=None,
             description="最后若干 epoch 关闭 mosaic，对应 close_mosaic=。",
         ),
@@ -896,7 +956,9 @@ def yolo_start_training(
     ] = None,
     singleCls: Annotated[
         bool | None,
-        Field(
+        _camel_or_snake_field(
+            "singleCls",
+            "single_cls",
             default=None,
             description="多类数据按单类训练，对应 single_cls=。",
         ),
@@ -910,28 +972,36 @@ def yolo_start_training(
     ] = None,
     trainTimeHours: Annotated[
         float | None,
-        Field(
+        _camel_or_snake_field(
+            "trainTimeHours",
+            "train_time_hours",
             default=None,
             description="最长训练时间（小时），设置时会作用于 Ultralytics time=。",
         ),
     ] = None,
     envId: Annotated[
         str,
-        Field(
+        _camel_or_snake_field(
+            "envId",
+            "env_id",
             default="default",
             description="训练运行环境 ID；用于选择对应 SSH（来自 YOLO_SSH_ENVS）。",
         ),
     ] = "default",
     jobId: Annotated[
         str | None,
-        Field(
+        _camel_or_snake_field(
+            "jobId",
+            "job_id",
             default=None,
             description="可选任务 ID；不传则自动生成。用于日志目录与 stop 时匹配进程。",
         ),
     ] = None,
     extraArgs: Annotated[
         dict[str, Any] | None,
-        Field(
+        _camel_or_snake_field(
+            "extraArgs",
+            "extra_args",
             default=None,
             description=(
                 "其余未在顶层暴露的 Ultralytics 参数，键为 CLI 名（如 lrf、warmup_epochs）。"
@@ -947,10 +1017,38 @@ def yolo_start_training(
     重复启动同 job 且仍在队列/运行中会直接返回已有记录。
     learningRate 可选：不传时不写 lr0，与未指定 optimizer 时沿用 Ultralytics 默认学习率。
     """
-    resolved_job_id = resolve_job_id(
-        jobId,
+    missing = _collect_missing_yolo_start_training_args(
         model=model,
         data_config_path=dataConfigPath,
+        epochs=epochs,
+        img_size=imgSize,
+        batch=batch,
+    )
+    if missing:
+        return err(
+            error_code="MISSING_ARGUMENTS",
+            message="yolo_start_training 缺少必填参数：" + ", ".join(missing),
+            retryable=False,
+            hint=(
+                "请在工具调用中传入 JSON：model、dataConfigPath、epochs、imgSize、batch"
+                "（camelCase，与 MCP schema 一致）；亦支持 data_config_path、img_size"
+                " 等 snake_case。"
+                "可先读取 MCP 资源 yolo://models、yolo://datasets、yolo://guide/training-params。"
+                "若仍报 Pydantic「Field required」，请重启/重载 MCP 使服务端加载最新代码。"
+            ),
+            payload={"missing": missing},
+        )
+    assert model is not None
+    assert dataConfigPath is not None
+    assert epochs is not None
+    assert imgSize is not None
+    assert batch is not None
+    model_str = str(model).strip()
+    data_config_str = str(dataConfigPath).strip()
+    resolved_job_id = resolve_job_id(
+        jobId,
+        model=model_str,
+        data_config_path=data_config_str,
         state_store=STATE_STORE,
     )
     merged_extras = _merge_training_cli_extras(
@@ -979,8 +1077,8 @@ def yolo_start_training(
     )
     req = TrainRequest(
         job_id=resolved_job_id,
-        model=model,
-        data_config_path=dataConfigPath,
+        model=model_str,
+        data_config_path=data_config_str,
         epochs=epochs,
         img_size=imgSize,
         batch=batch,

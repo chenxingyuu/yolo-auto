@@ -45,8 +45,36 @@ def _build_mlflow_button_elements(
     ]
 
 
-def _to_percent(progress: float) -> float:
-    return max(0.0, min(100.0, progress * 100.0))
+def _training_rows_to_chart_spec(
+    rows: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    values: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            parsed = parse_training_row(row)
+            ep = int(parsed["epoch"])
+        except Exception:
+            continue
+        if ep <= 0:
+            continue
+        ep_s = str(ep)
+        m50 = float(parsed["map50"])
+        m95 = float(parsed["map5095"])
+        rec = float(parsed["recall"])
+        values.append({"epoch": ep_s, "series": "mAP50", "value": m50})
+        values.append({"epoch": ep_s, "series": "mAP50-95", "value": m95})
+        values.append({"epoch": ep_s, "series": "Recall", "value": rec})
+    if not values:
+        return None
+    return {
+        "type": "line",
+        "title": {"text": "训练指标"},
+        "data": {"values": values},
+        "xField": "epoch",
+        "yField": "value",
+        "seriesField": "series",
+        "legends": {"visible": True, "orient": "bottom"},
+    }
 
 
 def _metric_column(
@@ -85,19 +113,14 @@ def _build_training_schema_card(
     title: str,
     header_template: str,
     epoch_text: str,
-    progress: float,
     elapsed_text: str,
     eta_text: str,
-    map50: float,
-    map5095: float,
-    recall: float,
-    loss: float,
     updated_time_text: str,
     mlflow_url: str | None = None,
     top_img_key: str | None = None,
     top_img_fallback_key: str | None = None,
+    training_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    progress_pct = _to_percent(progress)
     elements: list[dict[str, Any]] = []
     if top_img_key:
         image_element: dict[str, Any] = {
@@ -108,68 +131,43 @@ def _build_training_schema_card(
         if top_img_fallback_key:
             image_element["fallback_img_key"] = top_img_fallback_key
         elements.append(image_element)
-    elements.extend(
-        [
+    chart_spec = (
+        _training_rows_to_chart_spec(training_rows)
+        if training_rows
+        else None
+    )
+    if chart_spec is not None:
+        elements.append(
             {
-                "tag": "column_set",
-                "flex_mode": "stretch",
-                "horizontal_spacing": "12px",
-                "margin": "0px",
-                "columns": [
-                    _metric_column(
-                        value=epoch_text,
-                        label="Epoch",
-                        value_color="blue",
-                        background_style="blue-50",
-                    ),
-                    _metric_column(
-                        value=f"{progress_pct:.1f}%",
-                        label="训练进度",
-                        value_color="blue",
-                        background_style="blue-50",
-                    ),
-                    _metric_column(
-                        value=f"{elapsed_text} / {eta_text}",
-                        label="Elapsed / ETA",
-                        value_color="blue",
-                        background_style="blue-50",
-                        weight=2,
-                    ),
-                ],
-            },
-            {
-                "tag": "column_set",
-                "flex_mode": "stretch",
-                "horizontal_spacing": "12px",
-                "margin": "0px",
-                "columns": [
-                    _metric_column(
-                        value=f"{map50:.3f}",
-                        label="mAP50",
-                        value_color="violet",
-                        background_style="violet-50",
-                    ),
-                    _metric_column(
-                        value=f"{map5095:.3f}",
-                        label="mAP50-95",
-                        value_color="violet",
-                        background_style="violet-50",
-                    ),
-                    _metric_column(
-                        value=f"{recall:.3f}",
-                        label="Recall",
-                        value_color="purple",
-                        background_style="purple-50",
-                    ),
-                    _metric_column(
-                        value=f"{loss:.3f}",
-                        label="Loss",
-                        value_color="purple",
-                        background_style="purple-50",
-                    ),
-                ],
-            },
-        ]
+                "tag": "chart",
+                "element_id": "train_metrics_chart",
+                "aspect_ratio": "16:9",
+                "color_theme": "brand",
+                "chart_spec": chart_spec,
+            }
+        )
+    elements.append(
+        {
+            "tag": "column_set",
+            "flex_mode": "stretch",
+            "horizontal_spacing": "12px",
+            "margin": "0px",
+            "columns": [
+                _metric_column(
+                    value=epoch_text,
+                    label="Epoch",
+                    value_color="blue",
+                    background_style="blue-50",
+                ),
+                _metric_column(
+                    value=f"{elapsed_text} / {eta_text}",
+                    label="Elapsed / ETA",
+                    value_color="blue",
+                    background_style="blue-50",
+                    weight=2,
+                ),
+            ],
+        }
     )
     elements.extend(_build_mlflow_button_elements(mlflow_url))
     elements.append(
@@ -198,8 +196,6 @@ def _training_started_cell(value: str) -> str:
 
 def build_training_started_schema_card(
     *,
-    model_display: str,
-    data_display: str,
     epochs: int,
     imgsz: int,
     batch_display: str,
@@ -228,15 +224,6 @@ def build_training_started_schema_card(
         if top_img_fallback_key:
             img_el["fallback_img_key"] = top_img_fallback_key
         elements.append(img_el)
-    elements.append(
-        {
-            "tag": "markdown",
-            "content": (
-                f"**模型** {_training_started_cell(model_display)} · "
-                f"**数据** {_training_started_cell(data_display)}"
-            ),
-        }
-    )
     if optimizer_auto_notice:
         elements.append(
             {
@@ -547,17 +534,13 @@ def get_status(
             title="YOLO模型训练失败" if target == JobStatus.FAILED else "YOLO模型训练完成",
             header_template="red" if target == JobStatus.FAILED else "green",
             epoch_text="--/--",
-            progress=1.0,
             elapsed_text="n/a",
             eta_text="n/a",
-            map50=0.0,
-            map5095=0.0,
-            recall=0.0,
-            loss=0.0,
             updated_time_text=_format_card_timestamp(now),
             mlflow_url=mlflow_url,
             top_img_key=feishu_card_img_key,
             top_img_fallback_key=feishu_card_fallback_img_key,
+            training_rows=None,
         )
         updated = _upsert_training_card(
             record=updated,
@@ -628,17 +611,13 @@ def get_status(
                 title="YOLO模型训练里程碑",
                 header_template="blue",
                 epoch_text=f"{epoch}/{total_epochs}",
-                progress=progress,
                 elapsed_text=_format_duration(elapsed_seconds),
                 eta_text=_format_duration(eta_seconds) if eta_seconds is not None else "n/a",
-                map50=map50,
-                map5095=map5095,
-                recall=recall,
-                loss=loss,
                 updated_time_text=_format_card_timestamp(now),
                 mlflow_url=mlflow_url,
                 top_img_key=feishu_card_img_key,
                 top_img_fallback_key=feishu_card_fallback_img_key,
+                training_rows=rows,
             )
             record = _upsert_training_card(
                 record=record,
@@ -657,17 +636,13 @@ def get_status(
             title="YOLO模型训练完成",
             header_template="green",
             epoch_text=f"{epoch}/{total_epochs}",
-            progress=1.0,
             elapsed_text=_format_duration(elapsed_seconds),
             eta_text="0s",
-            map50=map50,
-            map5095=map5095,
-            recall=recall,
-            loss=loss,
             updated_time_text=_format_card_timestamp(now),
             mlflow_url=mlflow_url,
             top_img_key=feishu_card_img_key,
             top_img_fallback_key=feishu_card_fallback_img_key,
+            training_rows=rows,
         )
         updated = _upsert_training_card(
             record=updated,

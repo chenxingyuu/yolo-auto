@@ -4,7 +4,7 @@ from dataclasses import replace
 from unittest.mock import MagicMock
 
 from yolo_auto.models import JobRecord, JobStatus
-from yolo_auto.tools.status import get_status
+from yolo_auto.tools.status import _training_rows_to_chart_spec, get_status
 
 CSV_CONTENT = (
     "epoch,train/box_loss,metrics/mAP50(B),metrics/mAP50-95(B),metrics/precision(B),metrics/recall(B)\n"
@@ -39,6 +39,38 @@ def _make_record(job_id: str, *, status: JobStatus, pid: str, train_epochs: int)
         last_notified_state=None,
         last_metrics_at=None,
     )
+
+
+def test_training_rows_to_chart_spec_none_when_only_epoch_zero() -> None:
+    rows = [
+        {
+            "epoch": "0",
+            "train/box_loss": "0.1",
+            "metrics/mAP50(B)": "0.2",
+            "metrics/mAP50-95(B)": "0.3",
+            "metrics/recall(B)": "0.4",
+        }
+    ]
+    assert _training_rows_to_chart_spec(rows) is None
+
+
+def test_training_rows_to_chart_spec_builds_line_spec() -> None:
+    rows = [
+        {
+            "epoch": "1",
+            "train/box_loss": "0.1",
+            "metrics/mAP50(B)": "0.34",
+            "metrics/mAP50-95(B)": "0.56",
+            "metrics/recall(B)": "0.78",
+        }
+    ]
+    spec = _training_rows_to_chart_spec(rows)
+    assert spec is not None
+    assert spec["type"] == "line"
+    assert spec["seriesField"] == "series"
+    vals = spec["data"]["values"]
+    assert len(vals) == 3
+    assert {v["series"] for v in vals} == {"mAP50", "mAP50-95", "Recall"}
 
 
 def test_get_status_job_not_found(
@@ -184,7 +216,10 @@ def test_get_status_milestone_message_contains_eta_and_delta(
     card = kwargs["card"]
     assert card["schema"] == "2.0"
     assert card["header"]["title"]["content"] == "YOLO模型训练里程碑"
-    assert card["body"]["elements"][0]["tag"] == "column_set"
+    assert card["body"]["elements"][0]["tag"] == "chart"
+    assert card["body"]["elements"][0]["chart_spec"]["type"] == "line"
+    assert card["body"]["elements"][1]["tag"] == "column_set"
+    assert len(card["body"]["elements"][1]["columns"]) == 2
     assert any(
         "更新时间：" in str(element.get("content", ""))
         for element in card["body"]["elements"]
@@ -222,6 +257,9 @@ def test_get_status_card_supports_configurable_top_image(
     assert card["body"]["elements"][0]["tag"] == "img"
     assert card["body"]["elements"][0]["img_key"] == "img_v3_demo"
     assert card["body"]["elements"][0]["fallback_img_key"] == "img_v3_fb"
+    assert card["body"]["elements"][1]["tag"] == "chart"
+    assert card["body"]["elements"][2]["tag"] == "column_set"
+    assert len(card["body"]["elements"][2]["columns"]) == 2
     assert any(
         "更新时间：" in str(element.get("content", ""))
         for element in card["body"]["elements"]

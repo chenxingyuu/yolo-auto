@@ -78,7 +78,10 @@ def test_start_training_success(
 
     assert result["ok"] is True
     assert result["status"] == JobStatus.RUNNING.value
-    assert state_store.get("job-1") is not None
+    stored = state_store.get("job-1")
+    assert stored is not None
+    assert stored.paths.get("modelPath") == "/workspace/yolov8n.pt"
+    assert stored.paths.get("dataConfigPath") == "/data/dataset.yaml"
     mock_tracker.start_run.assert_called_once()
     call_kw = mock_tracker.start_run.call_args.kwargs
     assert call_kw["tags"]["yolo_job_id"] == "job-1"
@@ -94,7 +97,7 @@ def test_start_training_success(
     assert card["schema"] == "2.0"
     body = " ".join(str(e) for e in card["body"]["elements"])
     assert "job=" not in body and "runId" not in body
-    assert "yolov8n.pt" in body and "640" in body and "16" in body
+    assert "640" in body and "16" in body and "Epochs" in body
 
 
 def test_start_training_duplicate(

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import shlex
 import time
 from dataclasses import dataclass
@@ -75,12 +74,6 @@ def _is_optimizer_auto(extra_args: dict[str, Any] | None) -> bool:
     if raw is None:
         return False
     return str(raw).strip().casefold() == "auto"
-
-
-def _basename_path(path: str) -> str:
-    cleaned = path.strip().replace("\\", "/")
-    name = os.path.basename(cleaned)
-    return name or path.strip()
 
 
 def _format_scalar_for_card(value: Any) -> str:
@@ -168,6 +161,7 @@ def start_training(
     )
     job_dir = f"{req.jobs_dir}/{req.job_id}"
     log_path = f"{job_dir}/train.log"
+    data_abs_path = _resolve_remote_path(req.data_config_path, req.work_dir)
     extra_cli_args = _build_extra_cli_args(req.extra_args)
     lr_cli = f" lr0={req.learning_rate}" if req.learning_rate is not None else ""
     train_cmd = (
@@ -200,6 +194,8 @@ def start_training(
             "metricsPath": f"{job_dir}/results.csv",
             "bestPath": f"{job_dir}/weights/best.pt",
             "lastPath": f"{job_dir}/weights/last.pt",
+            "modelPath": model_abs_path,
+            "dataConfigPath": data_abs_path,
         },
         created_at=now if not existing else existing.created_at,
         updated_at=now,
@@ -222,8 +218,6 @@ def start_training(
         batch_text = str(req.batch)
     started_text = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now))
     card = build_training_started_schema_card(
-        model_display=_basename_path(req.model),
-        data_display=_basename_path(req.data_config_path),
         epochs=req.epochs,
         imgsz=req.img_size,
         batch_display=batch_text,
