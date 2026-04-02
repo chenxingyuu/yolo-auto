@@ -8,6 +8,15 @@ import mlflow
 from mlflow.entities import Run
 
 
+def _mlflow_param_strings(config: dict[str, Any]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for key, raw in config.items():
+        if raw is None:
+            continue
+        out[key] = str(raw)
+    return out
+
+
 @dataclass(frozen=True)
 class TrackerConfig:
     tracking_uri: str
@@ -51,11 +60,21 @@ class MLflowTracker:
         base = self._external_url.rstrip("/")
         return f"{base}/#/experiments/{exp_id}"
 
-    def start_run(self, job_id: str, config: dict[str, Any]) -> str:
+    def start_run(
+        self,
+        job_id: str,
+        config: dict[str, Any],
+        *,
+        tags: dict[str, str] | None = None,
+    ) -> str:
         if mlflow.active_run() is not None:
             mlflow.end_run(status="KILLED")
         run = mlflow.start_run(run_name=job_id)
-        mlflow.log_params(config)
+        mlflow.log_params(_mlflow_param_strings(config))
+        for tag_key, tag_val in (tags or {}).items():
+            val = str(tag_val).strip()
+            if val:
+                mlflow.set_tag(tag_key, val)
         return run.info.run_id
 
     def log_epoch(self, run_id: str, metrics: dict[str, float], step: int) -> None:
@@ -98,29 +117,51 @@ class MLflowTracker:
         with mlflow.start_run(run_id=run_id, nested=True):
             mlflow.end_run(status="KILLED")
 
-    def compare_runs(self, metric_key: str, descending: bool = True) -> list[Run]:
+    def compare_runs(
+        self,
+        metric_key: str,
+        descending: bool = True,
+        *,
+        filter_string: str | None = None,
+    ) -> list[Run]:
         order = "DESC" if descending else "ASC"
-        return mlflow.search_runs(
-            experiment_names=[self._experiment_name],
-            order_by=[f"metrics.{metric_key} {order}"],
-            output_format="list",
-        )
+        kwargs: dict[str, Any] = {
+            "experiment_names": [self._experiment_name],
+            "order_by": [f"metrics.{metric_key} {order}"],
+            "output_format": "list",
+        }
+        if filter_string:
+            kwargs["filter_string"] = filter_string
+        return mlflow.search_runs(**kwargs)
 
-    def summarize_top_runs(self, metric_key: str, limit: int = 5) -> list[dict[str, Any]]:
+    def summarize_top_runs(
+        self,
+        metric_key: str,
+        limit: int = 5,
+        *,
+        filter_string: str | None = None,
+    ) -> list[dict[str, Any]]:
         try:
-            runs = self.compare_runs(metric_key, descending=True)
+            runs = self.compare_runs(
+                metric_key,
+                descending=True,
+                filter_string=filter_string,
+            )
         except Exception:
             return []
         result: list[dict[str, Any]] = []
         for run in runs[:limit]:
             metrics = run.data.metrics or {}
             metric_val = float(metrics.get(metric_key, 0.0))
+            tags = run.data.tags or {}
+            group_tags = {k: tags[k] for k in sorted(tags) if k.startswith("yolo_")}
             result.append(
                 {
                     "runId": run.info.run_id,
                     "runName": run.info.run_name,
                     "metricKey": metric_key,
                     "metric": metric_val,
+                    "groupTags": group_tags,
                 }
             )
         return result

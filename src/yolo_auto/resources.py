@@ -58,6 +58,7 @@ def register_resources(
                     "trackingUri": settings.mlflow_tracking_uri,
                     "experimentName": settings.mlflow_experiment_name,
                     "externalUrl": settings.mlflow_external_url,
+                    "leaderboardFilter": settings.mlflow_leaderboard_filter,
                 },
                 "feishu": {
                     "reportEnable": settings.feishu_report_enable,
@@ -109,14 +110,22 @@ def register_resources(
     @mcp.resource(
         "yolo://mlflow/leaderboard",
         name="mlflow-leaderboard",
-        description="MLflow 实验中按主指标排序的 Top 10 runs 排行榜。",
+        description=(
+            "MLflow 实验中按主指标排序的 Top 10 runs；"
+            "可选环境变量 MLFLOW_LEADERBOARD_FILTER（MLflow search_runs 的 filter_string 语法）缩小范围。"
+        ),
         mime_type="application/json",
     )
     def resource_mlflow_leaderboard() -> str:
-        top_runs = tracker.summarize_top_runs(settings.primary_metric_key, limit=10)
+        top_runs = tracker.summarize_top_runs(
+            settings.primary_metric_key,
+            limit=10,
+            filter_string=settings.mlflow_leaderboard_filter,
+        )
         return json.dumps(
             {
                 "metricKey": settings.primary_metric_key,
+                "filter": settings.mlflow_leaderboard_filter,
                 "topRuns": top_runs,
                 "count": len(top_runs),
             },

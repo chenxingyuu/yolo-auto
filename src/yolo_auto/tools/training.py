@@ -11,6 +11,7 @@ from yolo_auto.feishu import FeishuNotifier
 from yolo_auto.models import JobRecord, JobStatus
 from yolo_auto.ssh_client import SSHClient
 from yolo_auto.state_store import JobStateStore
+from yolo_auto.tools.mlflow_grouping import build_training_group_tags
 from yolo_auto.tools.status import build_training_started_schema_card
 from yolo_auto.tracker import MLflowTracker
 
@@ -142,9 +143,16 @@ def start_training(
             payload={"jobId": req.job_id, "modelPath": model_abs_path},
         )
 
+    group_tags = build_training_group_tags(
+        job_id=req.job_id,
+        env_id=req.env_id,
+        model_path=req.model,
+        data_config_path=req.data_config_path,
+    )
     run_id = tracker.start_run(
         job_id=req.job_id,
         config={
+            "env_id": req.env_id,
             "model": req.model,
             "data_config_path": req.data_config_path,
             "epochs": req.epochs,
@@ -153,6 +161,7 @@ def start_training(
             "learning_rate": req.learning_rate,
             **(req.extra_args or {}),
         },
+        tags=group_tags,
     )
     job_dir = f"{req.jobs_dir}/{req.job_id}"
     log_path = f"{job_dir}/train.log"

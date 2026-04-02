@@ -60,6 +60,13 @@ def test_start_training_success(
     assert result["ok"] is True
     assert result["status"] == JobStatus.RUNNING.value
     assert state_store.get("job-1") is not None
+    mock_tracker.start_run.assert_called_once()
+    call_kw = mock_tracker.start_run.call_args.kwargs
+    assert call_kw["tags"]["yolo_job_id"] == "job-1"
+    assert call_kw["tags"]["yolo_data_stem"] == "dataset"
+    assert call_kw["tags"]["yolo_model_stem"] == "yolov8n"
+    assert call_kw["tags"]["yolo_source"] == "yolo_auto.training"
+    assert call_kw["config"]["env_id"] == "default"
     mock_ssh.execute_background.assert_called_once()
     mock_notifier.send_schema_card_with_message_id.assert_called_once()
     kwargs = mock_notifier.send_schema_card_with_message_id.call_args.kwargs
