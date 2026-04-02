@@ -31,7 +31,7 @@ def _build_mlflow_button_elements(
             "element_id": element_id,
             "type": "primary_filled",
             "size": "small",
-            "text": {"tag": "plain_text", "content": "查看 MLflow"},
+            "text": {"tag": "plain_text", "content": "Chrome浏览器打开"},
             "behaviors": [
                 {
                     "type": "open_url",
@@ -173,7 +173,33 @@ def _build_training_schema_card(
             ],
         }
     )
-    elements.extend(_build_mlflow_button_elements(mlflow_url))
+    mlflow_buttons = _build_mlflow_button_elements(mlflow_url)
+    if mlflow_buttons:
+        # 采用 bisect 双列：左列留空，按钮放右列，确保右侧对齐。
+        # 这里使用 flex_mode=flow，尽量贴近飞书官方示例的兼容写法。
+        elements.append(
+            {
+                "tag": "column_set",
+                "flex_mode": "flow",
+                "horizontal_align": "right",
+                "horizontal_spacing": "default",
+                "margin": "0px",
+                "columns": [
+                    {
+                        "tag": "column",
+                        "width": "auto",
+                        "vertical_align": "top",
+                        "elements": [],
+                    },
+                    {
+                        "tag": "column",
+                        "width": "auto",
+                        "vertical_align": "top",
+                        "elements": mlflow_buttons,
+                    }
+                ],
+            }
+        )
     elements.append(
         {
             "tag": "markdown",
@@ -310,9 +336,33 @@ def build_training_started_schema_card(
                 "content": f"<font color='grey'>{extra_params_line}</font>",
             }
         )
-    elements.extend(
-        _build_mlflow_button_elements(mlflow_url, element_id="mlflow_start_btn")
+    start_buttons = _build_mlflow_button_elements(
+        mlflow_url, element_id="mlflow_start_btn"
     )
+    if start_buttons:
+        elements.append(
+            {
+                "tag": "column_set",
+                "flex_mode": "flow",
+                "horizontal_align": "right",
+                "horizontal_spacing": "default",
+                "margin": "0px",
+                "columns": [
+                    {
+                        "tag": "column",
+                        "width": "auto",
+                        "vertical_align": "top",
+                        "elements": [],
+                    },
+                    {
+                        "tag": "column",
+                        "width": "auto",
+                        "vertical_align": "top",
+                        "elements": start_buttons,
+                    }
+                ],
+            }
+        )
     elements.append(
         {
             "tag": "markdown",
