@@ -11,7 +11,10 @@ from yolo_auto.models import JobRecord, JobStatus
 from yolo_auto.ssh_client import SSHClient
 from yolo_auto.state_store import JobStateStore
 from yolo_auto.tools.mlflow_grouping import build_training_group_tags
-from yolo_auto.tools.status import build_training_started_schema_card
+from yolo_auto.tools.status import (
+    build_schema_card_with_mlflow_button,
+    build_training_started_schema_card,
+)
 from yolo_auto.tracker import MLflowTracker
 
 
@@ -279,42 +282,26 @@ def stop_training(
         updated = state_store.update_status(job_id, JobStatus.STOPPED, now)
         if updated.last_notified_state != JobStatus.STOPPED:
             mlflow_url = tracker.get_run_url(effective_run_id)
-            notifier.send_rich_card(
+            card = build_schema_card_with_mlflow_button(
                 title="[YOLO] 训练已停止",
+                header_template="orange",
                 md_text=f"job={job_id}\nrunId={effective_run_id}",
-                header_color="orange",
-                actions=(
-                    [
-                        {
-                            "tag": "button",
-                            "text": {"tag": "plain_text", "content": "查看 MLflow"},
-                            "type": "url",
-                            "url": mlflow_url,
-                        }
-                    ]
-                    if mlflow_url
-                    else None
-                ),
+                mlflow_url=mlflow_url,
+                button_element_id="mlflow_stop_btn",
             )
+            message_id = notifier.send_schema_card_with_message_id(card=card)
+            if message_id:
+                state_store.mark_feishu_message(job_id, message_id, now)
             state_store.mark_notified(job_id, JobStatus.STOPPED, now)
         return ok(updated.to_dict())
     mlflow_url = tracker.get_run_url(effective_run_id)
-    notifier.send_rich_card(
+    card = build_schema_card_with_mlflow_button(
         title="[YOLO] 训练已停止",
+        header_template="orange",
         md_text=f"job={job_id}\nrunId={effective_run_id}",
-        header_color="orange",
-        actions=(
-            [
-                {
-                    "tag": "button",
-                    "text": {"tag": "plain_text", "content": "查看 MLflow"},
-                    "type": "url",
-                    "url": mlflow_url,
-                }
-            ]
-            if mlflow_url
-            else None
-        ),
+        mlflow_url=mlflow_url,
+        button_element_id="mlflow_stop_btn",
     )
+    _ = notifier.send_schema_card_with_message_id(card=card)
     return ok({"jobId": job_id, "runId": effective_run_id, "status": JobStatus.STOPPED.value})
 

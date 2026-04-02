@@ -5,7 +5,7 @@ import csv
 import logging
 import time
 from io import BytesIO, StringIO
-from typing import Any
+from typing import Any, Literal
 
 from yolo_auto.errors import err, ok
 from yolo_auto.feishu import FeishuNotifier
@@ -43,6 +43,73 @@ def _build_mlflow_button_elements(
             ],
         }
     ]
+
+
+def _right_aligned_button_column_set(
+    button_elements: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """把按钮组件右侧对齐到卡片容器右边。"""
+    return {
+        "tag": "column_set",
+        "flex_mode": "flow",
+        "horizontal_align": "right",
+        "horizontal_spacing": "default",
+        "margin": "0px",
+        "columns": [
+            {
+                "tag": "column",
+                "width": "auto",
+                "vertical_align": "top",
+                "elements": [],
+            },
+            {
+                "tag": "column",
+                "width": "auto",
+                "vertical_align": "top",
+                "elements": button_elements,
+            },
+        ],
+    }
+
+
+def build_schema_card_with_mlflow_button(
+    *,
+    title: str,
+    header_template: Literal["blue", "green", "red", "orange"],
+    md_text: str,
+    mlflow_url: str | None,
+    button_element_id: str = "mlflow_open_btn",
+) -> dict[str, Any]:
+    """构建简单 Schema 2.0 卡片：markdown + 右对齐按钮 + 更新时间。"""
+    elements: list[dict[str, Any]] = [
+        {
+            "tag": "markdown",
+            "content": md_text,
+        }
+    ]
+    button_elements = _build_mlflow_button_elements(
+        mlflow_url, element_id=button_element_id
+    )
+    if button_elements:
+        elements.append(_right_aligned_button_column_set(button_elements))
+    now_text = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    elements.append(
+        {
+            "tag": "markdown",
+            "content": f"<font color='grey'>更新时间：{now_text}</font>",
+            "text_align": "right",
+        }
+    )
+    return {
+        "schema": "2.0",
+        "header": {
+            "template": header_template,
+            "padding": "12px 12px 12px 12px",
+            "icon": {"tag": "standard_icon", "token": "code", "color": header_template},
+            "title": {"tag": "plain_text", "content": title},
+        },
+        "body": {"elements": elements},
+    }
 
 
 def _training_rows_to_chart_spec(

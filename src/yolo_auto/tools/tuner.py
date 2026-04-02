@@ -11,7 +11,7 @@ from yolo_auto.models import JobStatus
 from yolo_auto.ssh_client import SSHClient
 from yolo_auto.state_store import JobStateStore
 from yolo_auto.tools.mlflow_grouping import mlflow_filter_same_training_scope
-from yolo_auto.tools.status import get_status
+from yolo_auto.tools.status import build_schema_card_with_mlflow_button, get_status
 from yolo_auto.tools.training import TrainRequest, start_training
 from yolo_auto.tracker import MLflowTracker
 
@@ -165,28 +165,19 @@ def auto_tune(
 
     try:
         exp_url = tracker.get_experiment_url()
-        notifier.send_rich_card(
+        card = build_schema_card_with_mlflow_button(
             title="[YOLO] 调参完成",
+            header_template="green",
             md_text=(
                 f"baseJobId={req.base_job_id}\n"
                 f"bestJobId={best_trial['jobId']}\n"
                 f"{req.primary_metric_key}={float(best_trial['metric']):.4f}\n"
                 f"trials={len(trials)}"
             ),
-            header_color="green",
-            actions=(
-                [
-                    {
-                        "tag": "button",
-                        "text": {"tag": "plain_text", "content": "查看 MLflow 实验"},
-                        "type": "url",
-                        "url": exp_url,
-                    }
-                ]
-                if exp_url
-                else None
-            ),
+            mlflow_url=exp_url,
+            button_element_id="mlflow_tune_btn",
         )
+        notifier.send_schema_card_with_message_id(card=card)
     except Exception:
         pass
     return ok(
