@@ -17,7 +17,6 @@
 - `paramiko`（SSH 到远程 GPU 容器）
 - `mlflow`（实验追踪）
 - `httpx`（飞书 webhook）
-- `cvat-sdk`（CVAT 数据集管理与导出）
 - `pydantic`（参数与配置校验）
 - `python-dotenv`（加载项目根目录 `.env`）
 
@@ -97,7 +96,6 @@ cp .env.example .env
 | `YOLO_WATCH_POLL_INTERVAL_SECONDS` | 后台 Worker 轮询间隔（秒） |
 | `YOLO_WATCH_LOCK_FILE` | Worker 文件锁路径，避免多实例抢锁 |
 | `YOLO_MINIO_ALIAS` / `YOLO_MINIO_EXPORT_BUCKET` / `YOLO_MINIO_EXPORT_PREFIX` | MinIO 导出目录配置（供 `yolo_sync_dataset` 与 `yolo://minio/datasets` 使用） |
-| `CVAT_URL` / `CVAT_TOKEN` / `CVAT_ORG_SLUG` / `CVAT_CLOUD_STORAGE_ID` | CVAT 数据集管理与导出（可选） |
 | `MCP_TRANSPORT` / `MCP_HOST` / `MCP_PORT` / `MCP_PATH` | MCP 服务监听配置（容器 HTTP 部署常用） |
 
 > 根目录 `.env` 会在 `load_settings()` 时自动加载，**不会**覆盖你已 `export` 的同名变量。

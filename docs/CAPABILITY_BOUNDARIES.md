@@ -38,7 +38,6 @@
 
 ### 2.4 数据流水线（可选）
 
-- **CVAT**：项目/任务列表、导出请求、与 MinIO + 远程数据集目录同步的一键工具（需 `CVAT_*`）。
 - **MinIO**：`yolo_sync_dataset` 与 `yolo://minio/datasets` 等依赖远程已配置 `mc` 与 bucket。
 
 ### 2.5 只读上下文（MCP Resources）
