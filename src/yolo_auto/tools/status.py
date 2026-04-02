@@ -727,7 +727,13 @@ def get_status(
     process_alive = ssh_client.process_alive(record.pid)
 
     if process_alive and feishu_report_enable:
-        if epoch > 0:
+        milestone_n = feishu_report_every_n_epochs
+        should_report_milestone = (
+            milestone_n > 0
+            and epoch > 0
+            and epoch >= record.last_reported_epoch + milestone_n
+        )
+        if should_report_milestone:
             card = _build_training_schema_card(
                 title="YOLO模型训练里程碑",
                 header_template="blue",
@@ -747,8 +753,7 @@ def get_status(
                 notifier=notifier,
                 card=card,
             )
-            if epoch > record.last_reported_epoch:
-                record = state_store.mark_milestone_epoch(job_id, epoch, now)
+            record = state_store.mark_milestone_epoch(job_id, epoch, now)
 
     if not process_alive:
         updated = state_store.update_status(job_id, JobStatus.COMPLETED, now)

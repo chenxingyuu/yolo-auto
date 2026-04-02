@@ -155,7 +155,9 @@ def test_get_status_running_with_metrics(
     assert metrics["primaryMetric"] == 0.56
     latest = state_store.get("job-1")
     assert latest is not None
-    assert latest.feishu_message_id == "om_1"
+    # 默认 feishu_report_every_n_epochs=5，此时 epoch=1 不满足里程碑条件
+    mock_notifier.send_schema_card_with_message_id.assert_not_called()
+    assert latest.feishu_message_id is None
 
 
 def test_get_status_completed(

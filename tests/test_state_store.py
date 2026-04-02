@@ -47,3 +47,43 @@ def test_state_store_migrate_from_json_and_backup(tmp_path: Path) -> None:
     assert (tmp_path / "jobs.db").exists()
     assert (tmp_path / "jobs.json.bak").exists()
     assert not json_path.exists()
+
+
+def test_state_store_preserves_train_params(tmp_path: Path) -> None:
+    store = JobStateStore(str(tmp_path / "jobs.db"))
+    record = JobRecord(
+        job_id="job-trainparams",
+        run_id="run-job-trainparams",
+        status=JobStatus.RUNNING,
+        pid="123",
+        paths={},
+        created_at=1,
+        updated_at=1,
+        train_params={"lr0": 0.01, "optimizer": "SGD"},
+        train_epochs=2,
+        last_reported_epoch=0,
+    )
+    store.upsert(record)
+
+    updated1 = store.update_status(
+        "job-trainparams", JobStatus.COMPLETED, now_ts=2
+    )
+    assert updated1.train_params == record.train_params
+
+    updated2 = store.mark_notified(
+        "job-trainparams", JobStatus.STOPPED, now_ts=3
+    )
+    assert updated2.train_params == record.train_params
+
+    updated3 = store.mark_metrics("job-trainparams", now_ts=4)
+    assert updated3.train_params == record.train_params
+
+    updated4 = store.mark_milestone_epoch(
+        "job-trainparams", epoch=5, now_ts=5
+    )
+    assert updated4.train_params == record.train_params
+
+    updated5 = store.mark_feishu_message(
+        "job-trainparams", message_id="om_x", now_ts=6
+    )
+    assert updated5.train_params == record.train_params

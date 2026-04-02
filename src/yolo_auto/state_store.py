@@ -59,6 +59,7 @@ class JobStateStore:
             feishu_message_id=record.feishu_message_id,
             last_metrics_at=record.last_metrics_at,
             train_epochs=record.train_epochs,
+            train_params=record.train_params,
             last_reported_epoch=record.last_reported_epoch,
         )
         self.upsert(updated)
@@ -81,6 +82,7 @@ class JobStateStore:
             feishu_message_id=record.feishu_message_id,
             last_metrics_at=record.last_metrics_at,
             train_epochs=record.train_epochs,
+            train_params=record.train_params,
             last_reported_epoch=record.last_reported_epoch,
         )
         self.upsert(updated)
@@ -103,6 +105,7 @@ class JobStateStore:
             feishu_message_id=record.feishu_message_id,
             last_metrics_at=now_ts,
             train_epochs=record.train_epochs,
+            train_params=record.train_params,
             last_reported_epoch=record.last_reported_epoch,
         )
         self.upsert(updated)
@@ -125,6 +128,7 @@ class JobStateStore:
             feishu_message_id=record.feishu_message_id,
             last_metrics_at=record.last_metrics_at,
             train_epochs=record.train_epochs,
+            train_params=record.train_params,
             last_reported_epoch=epoch,
         )
         self.upsert(updated)
@@ -152,6 +156,7 @@ class JobStateStore:
             feishu_message_id=message_id,
             last_metrics_at=record.last_metrics_at,
             train_epochs=record.train_epochs,
+            train_params=record.train_params,
             last_reported_epoch=record.last_reported_epoch,
         )
         self.upsert(updated)
