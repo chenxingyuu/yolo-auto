@@ -765,7 +765,13 @@ def yolo_start_training(
     ],
     learningRate: Annotated[
         float,
-        Field(gt=0, description="初始学习率，对应远程命令中的 lr0=。"),
+        Field(
+            gt=0,
+            description=(
+                "初始学习率，对应远程命令中的 lr0=。"
+                "若 optimizer=auto，Ultralytics 通常会忽略该 lr0，由 auto 流程另行决定学习率。"
+            ),
+        ),
     ],
     device: Annotated[
         str | int | list[Any] | None,
@@ -794,7 +800,10 @@ def yolo_start_training(
         str | None,
         Field(
             default=None,
-            description="优化器名（如 SGD、AdamW、auto 等），对应 optimizer=。",
+            description=(
+                "优化器名（如 SGD、AdamW、auto 等），对应 optimizer=。"
+                "设为 auto 时 Ultralytics 会忽略 lr0、momentum 等，自动选择优化器与超参。"
+            ),
         ),
     ] = None,
     pretrained: Annotated[
@@ -977,7 +986,15 @@ def yolo_start_training(
         extra_args=merged_extras,
     )
     ssh_client = SSH_BY_ENV.get(envId, SSH)
-    return start_training(req, ssh_client, NOTIFIER, TRACKER, STATE_STORE)
+    return start_training(
+        req,
+        ssh_client,
+        NOTIFIER,
+        TRACKER,
+        STATE_STORE,
+        feishu_card_img_key=SETTINGS.feishu_card_img_key,
+        feishu_card_fallback_img_key=SETTINGS.feishu_card_fallback_img_key,
+    )
 
 
 @mcp.tool(name="yolo_get_status")

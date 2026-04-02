@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shlex
 import time
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ from yolo_auto.feishu import FeishuNotifier
 from yolo_auto.models import JobRecord, JobStatus
 from yolo_auto.ssh_client import SSHClient
 from yolo_auto.state_store import JobStateStore
+from yolo_auto.tools.status import build_training_started_schema_card
 from yolo_auto.tracker import MLflowTracker
 
 
@@ -56,12 +58,72 @@ def _build_extra_cli_args(extra_args: dict[str, Any] | None) -> str:
     return " ".join(arg_parts)
 
 
+_START_CARD_ROW2_KEYS = frozenset({"optimizer", "device", "workers", "patience", "amp"})
+
+_OPTIMIZER_AUTO_NOTICE = (
+    "提示：optimizer=auto 时 Ultralytics 会忽略命令行中的 lr0、momentum 等，"
+    "由训练器自动选定优化器与学习率；卡片上的 lr0 仅为传入值，实际以 train.log 为准。"
+)
+
+
+def _is_optimizer_auto(extra_args: dict[str, Any] | None) -> bool:
+    if not extra_args:
+        return False
+    raw = extra_args.get("optimizer")
+    if raw is None:
+        return False
+    return str(raw).strip().casefold() == "auto"
+
+
+def _basename_path(path: str) -> str:
+    cleaned = path.strip().replace("\\", "/")
+    name = os.path.basename(cleaned)
+    return name or path.strip()
+
+
+def _format_scalar_for_card(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "True" if value else "False"
+    return str(value)
+
+
+def _extra_params_line_for_start_card(extra_args: dict[str, Any] | None) -> str | None:
+    if not extra_args:
+        return None
+    pairs: list[tuple[str, str]] = []
+    for key, raw in sorted(extra_args.items()):
+        if raw is None or key in _START_CARD_ROW2_KEYS:
+            continue
+        pairs.append((key, _format_scalar_for_card(raw)))
+    if not pairs:
+        return None
+    shown = pairs[:5]
+    line = "其他：" + "，".join(f"{k}={v}" for k, v in shown)
+    if len(pairs) > 5:
+        line += " …"
+    return line
+
+
+def _fourth_metric_for_start_card(extra_args: dict[str, Any] | None) -> tuple[str, str]:
+    ex = extra_args or {}
+    if ex.get("patience") is not None:
+        return "Patience", str(ex["patience"])
+    if ex.get("amp") is not None:
+        return "AMP", _format_scalar_for_card(ex["amp"])
+    return "Patience", ""
+
+
 def start_training(
     req: TrainRequest,
     ssh_client: SSHClient,
     notifier: FeishuNotifier,
     tracker: MLflowTracker,
     state_store: JobStateStore,
+    *,
+    feishu_card_img_key: str | None = None,
+    feishu_card_fallback_img_key: str | None = None,
 ) -> dict[str, object]:
     now = int(time.time())
     existing = state_store.get(req.job_id)
@@ -136,24 +198,40 @@ def start_training(
     )
     state_store.upsert(record)
     mlflow_url = tracker.get_run_url(run_id)
-    notifier.send_rich_card(
-        title="[YOLO] 训练已启动",
-        md_text=f"job={req.job_id}\npid={pid}\nrunId={run_id}\nepochs={req.epochs}",
-        header_color="blue",
-        actions=(
-            [
-                {
-                    "tag": "button",
-                    "text": {"tag": "plain_text", "content": "查看 MLflow"},
-                    "type": "url",
-                    "url": mlflow_url,
-                }
-            ]
-            if mlflow_url
-            else None
-        ),
+    ex = req.extra_args or {}
+    fourth_label, fourth_val = _fourth_metric_for_start_card(req.extra_args)
+    optimizer_auto = _is_optimizer_auto(req.extra_args)
+    training_hints = [_OPTIMIZER_AUTO_NOTICE] if optimizer_auto else []
+    lr_text = f"{req.learning_rate:g}"
+    if isinstance(req.batch, float) and req.batch == int(req.batch):
+        batch_text = str(int(req.batch))
+    else:
+        batch_text = str(req.batch)
+    started_text = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now))
+    card = build_training_started_schema_card(
+        model_display=_basename_path(req.model),
+        data_display=_basename_path(req.data_config_path),
+        epochs=req.epochs,
+        imgsz=req.img_size,
+        batch_display=batch_text,
+        lr_display=lr_text,
+        optimizer_display=_format_scalar_for_card(ex.get("optimizer")),
+        device_display=_format_scalar_for_card(ex.get("device")),
+        workers_display=_format_scalar_for_card(ex.get("workers")),
+        fourth_metric_label=fourth_label,
+        fourth_metric_value=fourth_val,
+        extra_params_line=_extra_params_line_for_start_card(req.extra_args),
+        optimizer_auto_notice=_OPTIMIZER_AUTO_NOTICE if optimizer_auto else None,
+        started_time_text=started_text,
+        mlflow_url=mlflow_url,
+        top_img_key=feishu_card_img_key,
+        top_img_fallback_key=feishu_card_fallback_img_key,
     )
-    return ok(record.to_dict())
+    notifier.send_schema_card_with_message_id(card=card)
+    payload = record.to_dict()
+    if training_hints:
+        payload = {**payload, "trainingHints": training_hints}
+    return ok(payload)
 
 
 def stop_training(

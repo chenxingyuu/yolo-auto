@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from unittest.mock import MagicMock
 
 from yolo_auto.models import JobRecord, JobStatus
@@ -21,6 +22,29 @@ def _make_req(job_id: str) -> TrainRequest:
     )
 
 
+def test_start_training_optimizer_auto_hints(
+    mock_ssh: MagicMock,
+    mock_notifier: MagicMock,
+    mock_tracker: MagicMock,
+    state_store,
+) -> None:
+    mock_ssh.execute.return_value = ("", "", 0)
+    mock_ssh.execute_background.return_value = ("12345", 0)
+
+    req = replace(
+        _make_req("job-auto"),
+        extra_args={"optimizer": "auto", "val": True},
+    )
+    result = start_training(req, mock_ssh, mock_notifier, mock_tracker, state_store)
+
+    assert result["ok"] is True
+    assert "trainingHints" in result
+    assert any("optimizer=auto" in h for h in result["trainingHints"])
+    card = mock_notifier.send_schema_card_with_message_id.call_args.kwargs["card"]
+    body = " ".join(str(e) for e in card["body"]["elements"])
+    assert "optimizer=auto" in body
+
+
 def test_start_training_success(
     mock_ssh: MagicMock,
     mock_notifier: MagicMock,
@@ -37,7 +61,13 @@ def test_start_training_success(
     assert result["status"] == JobStatus.RUNNING.value
     assert state_store.get("job-1") is not None
     mock_ssh.execute_background.assert_called_once()
-    mock_notifier.send_rich_card.assert_called()
+    mock_notifier.send_schema_card_with_message_id.assert_called_once()
+    kwargs = mock_notifier.send_schema_card_with_message_id.call_args.kwargs
+    card = kwargs["card"]
+    assert card["schema"] == "2.0"
+    body = " ".join(str(e) for e in card["body"]["elements"])
+    assert "job=" not in body and "runId" not in body
+    assert "yolov8n.pt" in body and "640" in body and "16" in body
 
 
 def test_start_training_duplicate(
@@ -64,7 +94,7 @@ def test_start_training_duplicate(
 
     mock_ssh.execute_background.reset_mock()
     mock_tracker.start_run.reset_mock()
-    mock_notifier.send_rich_card.reset_mock()
+    mock_notifier.send_schema_card_with_message_id.reset_mock()
 
     result = start_training(req, mock_ssh, mock_notifier, mock_tracker, state_store)
     assert result["ok"] is True
@@ -72,7 +102,7 @@ def test_start_training_duplicate(
     assert result["status"] == JobStatus.RUNNING.value
     mock_ssh.execute_background.assert_not_called()
     mock_tracker.start_run.assert_not_called()
-    mock_notifier.send_rich_card.assert_not_called()
+    mock_notifier.send_schema_card_with_message_id.assert_not_called()
 
 
 def test_start_training_ssh_fail(

@@ -18,15 +18,29 @@ from yolo_auto.tracker import MLflowTracker
 logger = logging.getLogger(__name__)
 
 
-def _build_mlflow_actions(mlflow_url: str | None) -> list[dict[str, Any]] | None:
+def _build_mlflow_button_elements(
+    mlflow_url: str | None,
+    *,
+    element_id: str = "mlflow_open_btn",
+) -> list[dict[str, Any]]:
     if not mlflow_url:
-        return None
+        return []
     return [
         {
             "tag": "button",
+            "element_id": element_id,
+            "type": "primary_filled",
+            "size": "small",
             "text": {"tag": "plain_text", "content": "查看 MLflow"},
-            "type": "url",
-            "url": mlflow_url,
+            "behaviors": [
+                {
+                    "type": "open_url",
+                    "default_url": mlflow_url,
+                    "pc_url": mlflow_url,
+                    "android_url": mlflow_url,
+                    "ios_url": mlflow_url,
+                }
+            ],
         }
     ]
 
@@ -79,7 +93,7 @@ def _build_training_schema_card(
     recall: float,
     loss: float,
     updated_time_text: str,
-    actions: list[dict[str, Any]] | None = None,
+    mlflow_url: str | None = None,
     top_img_key: str | None = None,
     top_img_fallback_key: str | None = None,
 ) -> dict[str, Any]:
@@ -155,20 +169,166 @@ def _build_training_schema_card(
                     ),
                 ],
             },
+        ]
+    )
+    elements.extend(_build_mlflow_button_elements(mlflow_url))
+    elements.append(
+        {
+            "tag": "markdown",
+            "content": f"<font color='grey'>更新时间：{updated_time_text}</font>",
+            "text_align": "right",
+        }
+    )
+    return {
+        "schema": "2.0",
+        "header": {
+            "template": header_template,
+            "padding": "12px 12px 12px 12px",
+            "icon": {"tag": "standard_icon", "token": "code", "color": header_template},
+            "title": {"tag": "plain_text", "content": title},
+        },
+        "body": {"elements": elements},
+    }
+
+
+def _training_started_cell(value: str) -> str:
+    t = str(value).strip()
+    return t if t else "—"
+
+
+def build_training_started_schema_card(
+    *,
+    model_display: str,
+    data_display: str,
+    epochs: int,
+    imgsz: int,
+    batch_display: str,
+    lr_display: str,
+    optimizer_display: str,
+    device_display: str,
+    workers_display: str,
+    fourth_metric_label: str,
+    fourth_metric_value: str,
+    extra_params_line: str | None = None,
+    optimizer_auto_notice: str | None = None,
+    started_time_text: str,
+    mlflow_url: str | None = None,
+    top_img_key: str | None = None,
+    top_img_fallback_key: str | None = None,
+    title: str = "YOLO 训练已启动",
+    header_template: str = "blue",
+) -> dict[str, Any]:
+    elements: list[dict[str, Any]] = []
+    if top_img_key:
+        img_el: dict[str, Any] = {
+            "tag": "img",
+            "img_key": top_img_key,
+            "alt": {"tag": "plain_text", "content": "training cover"},
+        }
+        if top_img_fallback_key:
+            img_el["fallback_img_key"] = top_img_fallback_key
+        elements.append(img_el)
+    elements.append(
+        {
+            "tag": "markdown",
+            "content": (
+                f"**模型** {_training_started_cell(model_display)} · "
+                f"**数据** {_training_started_cell(data_display)}"
+            ),
+        }
+    )
+    if optimizer_auto_notice:
+        elements.append(
             {
                 "tag": "markdown",
-                "content": f"<font color='grey'>更新时间：{updated_time_text}</font>",
-                "text_align": "right",
+                "content": f"<font color='grey'>{optimizer_auto_notice}</font>",
+            }
+        )
+    elements.extend(
+        [
+            {
+                "tag": "column_set",
+                "flex_mode": "stretch",
+                "horizontal_spacing": "12px",
+                "margin": "0px",
+                "columns": [
+                    _metric_column(
+                        value=_training_started_cell(str(epochs)),
+                        label="Epochs",
+                        value_color="blue",
+                        background_style="blue-50",
+                    ),
+                    _metric_column(
+                        value=_training_started_cell(str(imgsz)),
+                        label="imgsz",
+                        value_color="blue",
+                        background_style="blue-50",
+                    ),
+                    _metric_column(
+                        value=_training_started_cell(batch_display),
+                        label="Batch",
+                        value_color="blue",
+                        background_style="blue-50",
+                    ),
+                    _metric_column(
+                        value=_training_started_cell(lr_display),
+                        label="lr0",
+                        value_color="blue",
+                        background_style="blue-50",
+                    ),
+                ],
+            },
+            {
+                "tag": "column_set",
+                "flex_mode": "stretch",
+                "horizontal_spacing": "12px",
+                "margin": "0px",
+                "columns": [
+                    _metric_column(
+                        value=_training_started_cell(optimizer_display),
+                        label="优化器",
+                        value_color="violet",
+                        background_style="violet-50",
+                    ),
+                    _metric_column(
+                        value=_training_started_cell(device_display),
+                        label="Device",
+                        value_color="violet",
+                        background_style="violet-50",
+                    ),
+                    _metric_column(
+                        value=_training_started_cell(workers_display),
+                        label="Workers",
+                        value_color="violet",
+                        background_style="violet-50",
+                    ),
+                    _metric_column(
+                        value=_training_started_cell(fourth_metric_value),
+                        label=fourth_metric_label,
+                        value_color="violet",
+                        background_style="violet-50",
+                    ),
+                ],
             },
         ]
     )
-    if actions:
+    if extra_params_line:
         elements.append(
             {
-                "tag": "action",
-                "actions": actions,
+                "tag": "markdown",
+                "content": f"<font color='grey'>{extra_params_line}</font>",
             }
         )
+    elements.extend(
+        _build_mlflow_button_elements(mlflow_url, element_id="mlflow_start_btn")
+    )
+    elements.append(
+        {
+            "tag": "markdown",
+            "content": f"<font color='grey'>启动时间：{started_time_text}</font>",
+            "text_align": "right",
+        }
+    )
     return {
         "schema": "2.0",
         "header": {
@@ -395,7 +555,7 @@ def get_status(
             recall=0.0,
             loss=0.0,
             updated_time_text=_format_card_timestamp(now),
-            actions=_build_mlflow_actions(mlflow_url),
+            mlflow_url=mlflow_url,
             top_img_key=feishu_card_img_key,
             top_img_fallback_key=feishu_card_fallback_img_key,
         )
@@ -476,7 +636,7 @@ def get_status(
                 recall=recall,
                 loss=loss,
                 updated_time_text=_format_card_timestamp(now),
-                actions=_build_mlflow_actions(mlflow_url),
+                mlflow_url=mlflow_url,
                 top_img_key=feishu_card_img_key,
                 top_img_fallback_key=feishu_card_fallback_img_key,
             )
@@ -505,7 +665,7 @@ def get_status(
             recall=recall,
             loss=loss,
             updated_time_text=_format_card_timestamp(now),
-            actions=_build_mlflow_actions(mlflow_url),
+            mlflow_url=mlflow_url,
             top_img_key=feishu_card_img_key,
             top_img_fallback_key=feishu_card_fallback_img_key,
         )
