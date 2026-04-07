@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from yolo_auto.tools.mlflow_grouping import (
     build_training_group_tags,
+    dataset_scope_key,
     mlflow_filter_same_training_scope,
     path_stem,
 )
@@ -27,11 +28,17 @@ def test_build_training_group_tags() -> None:
     assert tags["yolo_source"] == "yolo_auto.training"
 
 
+def test_dataset_scope_key_prefers_parent_for_generic_data_yaml() -> None:
+    assert dataset_scope_key("/workspace/datasets/helmet/data.yaml") == "helmet"
+    assert dataset_scope_key("/workspace/datasets/task_7/dataset.yml") == "task_7"
+    assert dataset_scope_key("/workspace/datasets/coco128.yaml") == "coco128"
+
+
 def test_mlflow_filter_escapes_quotes() -> None:
     flt = mlflow_filter_same_training_scope(
         env_id="e'1",
         model_path="a.pt",
-        data_config_path="b.yaml",
+        data_config_path="/datasets/b/data.yaml",
     )
     assert "tags.yolo_env_id = 'e''1'" in flt
     assert "tags.yolo_data_stem = 'b'" in flt

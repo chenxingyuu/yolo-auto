@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import mlflow
+import pandas as pd
 from mlflow.entities import Run
 
 
@@ -71,11 +72,31 @@ class MLflowTracker:
             mlflow.end_run(status="KILLED")
         run = mlflow.start_run(run_name=job_id)
         mlflow.log_params(_mlflow_param_strings(config))
+        self._try_log_dataset_input(config)
         for tag_key, tag_val in (tags or {}).items():
             val = str(tag_val).strip()
             if val:
                 mlflow.set_tag(tag_key, val)
         return run.info.run_id
+
+    def _try_log_dataset_input(self, config: dict[str, Any]) -> None:
+        raw_path = config.get("data_config_path")
+        if raw_path is None:
+            return
+        dataset_path = str(raw_path).strip()
+        if not dataset_path:
+            return
+
+        try:
+            dataset = mlflow.data.from_pandas(
+                pd.DataFrame({"data_config_path": [dataset_path]}),
+                source=dataset_path,
+                name="yolo_dataset_config",
+            )
+            mlflow.log_input(dataset, context="training")
+        except Exception:
+            # Dataset input 记录失败时降级，不影响训练主流程。
+            return
 
     def log_epoch(self, run_id: str, metrics: dict[str, float], step: int) -> None:
         # 训练启动后 `start_run()` 不会自动 end_run，因此此时

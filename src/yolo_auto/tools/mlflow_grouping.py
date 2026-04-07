@@ -11,6 +11,23 @@ def path_stem(path: str) -> str:
     return stem or base
 
 
+def dataset_scope_key(path: str) -> str:
+    """为数据集分组生成更稳定的键。
+
+    若文件名是通用名（如 data.yaml / dataset.yml），优先使用父目录名，
+    避免不同数据集都被归到同一个 `data` 分组。
+    """
+    cleaned = path.strip().replace("\\", "/")
+    stem = path_stem(cleaned).strip().lower()
+    if stem not in {"data", "dataset"}:
+        return path_stem(cleaned)
+
+    parent = os.path.basename(os.path.dirname(cleaned)).strip()
+    if parent:
+        return parent
+    return path_stem(cleaned)
+
+
 def build_training_group_tags(
     *,
     job_id: str,
@@ -22,7 +39,7 @@ def build_training_group_tags(
     return {
         "yolo_job_id": job_id,
         "yolo_env_id": str(env_id).strip() or "default",
-        "yolo_data_stem": path_stem(data_config_path),
+        "yolo_data_stem": dataset_scope_key(data_config_path),
         "yolo_model_stem": path_stem(model_path),
         "yolo_source": "yolo_auto.training",
     }
@@ -40,7 +57,7 @@ def mlflow_filter_same_training_scope(
 ) -> str:
     """与当前训练/调参会话同环境、同数据与模型分组的 runs（用于 search_runs）。"""
     e = _escape_filter_literal(str(env_id).strip() or "default")
-    ds = _escape_filter_literal(path_stem(data_config_path))
+    ds = _escape_filter_literal(dataset_scope_key(data_config_path))
     ms = _escape_filter_literal(path_stem(model_path))
     return (
         f"tags.yolo_env_id = '{e}' and "
