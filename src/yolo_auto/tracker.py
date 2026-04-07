@@ -32,6 +32,7 @@ class MLflowTracker:
         self._experiment_name = config.experiment_name
         self._external_url = (config.external_url or "").strip() or None
         self._experiment_id: str | None = None
+        self._last_logged_step_by_run: dict[str, int] = {}
 
     def _get_experiment_id(self) -> str | None:
         if self._experiment_id is not None:
@@ -99,6 +100,12 @@ class MLflowTracker:
             return
 
     def log_epoch(self, run_id: str, metrics: dict[str, float], step: int) -> None:
+        # 高频轮询 get_status 时，同一 epoch 可能被重复上报。
+        # 这里做单进程去重，减少 MLflow backend（尤其 sqlite）写放大。
+        last_step = self._last_logged_step_by_run.get(run_id)
+        if last_step is not None and step <= last_step:
+            return
+
         # 训练启动后 `start_run()` 不会自动 end_run，因此此时
         # `mlflow.active_run()` 可能已经等于当前 run_id。
         # 此时再次以 nested=False 开始同一个 run 会抛异常：
@@ -106,11 +113,13 @@ class MLflowTracker:
         active = mlflow.active_run()
         if active is not None and active.info.run_id == run_id:
             mlflow.log_metrics(metrics, step=step)
+            self._last_logged_step_by_run[run_id] = step
             return
 
         # 若当前没有对应 run 处于 active，显式打开并记录指标。
         with mlflow.start_run(run_id=run_id, nested=True):
             mlflow.log_metrics(metrics, step=step)
+        self._last_logged_step_by_run[run_id] = step
 
     def finish_run(self, run_id: str, best_model_path: str | None = None) -> None:
         active = mlflow.active_run()

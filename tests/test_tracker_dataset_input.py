@@ -70,3 +70,25 @@ def test_start_run_dataset_input_failure_does_not_break(monkeypatch) -> None:
     )
 
     assert run_id == "run-2"
+
+
+def test_log_epoch_skips_duplicate_or_older_step(monkeypatch) -> None:
+    logged_steps: list[int] = []
+
+    monkeypatch.setattr(tracker_mod.mlflow, "set_tracking_uri", lambda _x: None)
+    monkeypatch.setattr(tracker_mod.mlflow, "set_experiment", lambda _x: None)
+    monkeypatch.setattr(tracker_mod.mlflow, "active_run", lambda: _fake_run("run-3"))
+    monkeypatch.setattr(
+        tracker_mod.mlflow,
+        "log_metrics",
+        lambda _metrics, step: logged_steps.append(int(step)),
+    )
+    monkeypatch.setattr(tracker_mod.mlflow, "start_run", lambda **_kwargs: _fake_run("run-3"))
+
+    tracker = MLflowTracker(TrackerConfig("sqlite:///x.db", "exp"))
+    tracker.log_epoch("run-3", {"map5095": 0.1}, step=1)
+    tracker.log_epoch("run-3", {"map5095": 0.2}, step=1)
+    tracker.log_epoch("run-3", {"map5095": 0.3}, step=0)
+    tracker.log_epoch("run-3", {"map5095": 0.4}, step=2)
+
+    assert logged_steps == [1, 2]
