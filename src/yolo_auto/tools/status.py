@@ -649,6 +649,7 @@ def get_status(
     ssh_client: SSHClient,
     notifier: FeishuNotifier,
     *,
+    mlflow_url: str | None = None,
     feishu_report_enable: bool = True,
     feishu_report_every_n_epochs: int = 5,
     primary_metric_key: str = "map5095",
@@ -667,7 +668,6 @@ def get_status(
         )
 
     effective_run_id = record.run_id or run_id
-    mlflow_url = None
     metrics_path = (record.paths.get("metricsPath") or "").strip()
     if not metrics_path:
         return err(

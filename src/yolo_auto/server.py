@@ -648,6 +648,7 @@ def yolo_start_training(
         ssh_client,
         NOTIFIER,
         STATE_STORE,
+        mlflow_url=TRACKER.get_experiment_url(),
         feishu_card_img_key=SETTINGS.feishu_card_img_key,
         feishu_card_fallback_img_key=SETTINGS.feishu_card_fallback_img_key,
     )
@@ -673,6 +674,7 @@ def yolo_get_status(
         STATE_STORE,
         ssh_client,
         NOTIFIER,
+        mlflow_url=TRACKER.get_experiment_url(),
         feishu_report_enable=SETTINGS.feishu_report_enable,
         feishu_report_every_n_epochs=SETTINGS.feishu_report_every_n_epochs,
         primary_metric_key=SETTINGS.primary_metric_key,
@@ -695,7 +697,14 @@ def yolo_stop_training(
     """
     record = STATE_STORE.get(jobId)
     ssh_client = SSH_BY_ENV.get(record.env_id, SSH) if record else SSH
-    return stop_training(jobId, runId, ssh_client, NOTIFIER, STATE_STORE)
+    return stop_training(
+        jobId,
+        runId,
+        ssh_client,
+        NOTIFIER,
+        STATE_STORE,
+        mlflow_url=TRACKER.get_experiment_url(),
+    )
 
 
 @mcp.tool(name="yolo_validate")

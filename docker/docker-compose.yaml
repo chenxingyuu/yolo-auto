@@ -8,6 +8,9 @@ services:
     restart: unless-stopped
     ports:
       - "2222:2222"
+    environment:
+      # MLflow tracking backend used by yolo-auto
+      MLFLOW_TRACKING_URI: "sqlite:////workspace/mlflow.db"
     gpus: all
     volumes:
       - /data/yolo-datasets:/workspace/datasets
@@ -15,4 +18,3 @@ services:
       - /data/yolo-models:/workspace/models
       - /root/.ssh/authorized_keys:/root/.ssh/authorized_keys:ro
       - ./mc-config.json:/root/.mc/config.json:ro
-

@@ -136,6 +136,7 @@ def start_training(
     notifier: FeishuNotifier,
     state_store: JobStateStore,
     *,
+    mlflow_url: str | None = None,
     feishu_card_img_key: str | None = None,
     feishu_card_fallback_img_key: str | None = None,
 ) -> dict[str, object]:
@@ -238,7 +239,7 @@ def start_training(
         extra_params_line=_extra_params_line_for_start_card(req.extra_args),
         optimizer_auto_notice=_OPTIMIZER_AUTO_NOTICE if optimizer_auto else None,
         started_time_text=started_text,
-        mlflow_url=None,
+        mlflow_url=mlflow_url,
         top_img_key=feishu_card_img_key,
         top_img_fallback_key=feishu_card_fallback_img_key,
     )
@@ -255,6 +256,8 @@ def stop_training(
     ssh_client: SSHClient,
     notifier: FeishuNotifier,
     state_store: JobStateStore,
+    *,
+    mlflow_url: str | None = None,
 ) -> dict[str, object]:
     now = int(time.time())
     record = state_store.get(job_id)
@@ -287,7 +290,7 @@ def stop_training(
                 title="[YOLO] 训练已停止",
                 header_template="orange",
                 md_text=f"job={job_id}\nrunId={effective_run_id}",
-                mlflow_url=None,
+                mlflow_url=mlflow_url,
                 button_element_id="mlflow_stop_btn",
             )
             message_id = notifier.send_schema_card_with_message_id(card=card)
@@ -299,7 +302,7 @@ def stop_training(
         title="[YOLO] 训练已停止",
         header_template="orange",
         md_text=f"job={job_id}\nrunId={effective_run_id}",
-        mlflow_url=None,
+        mlflow_url=mlflow_url,
         button_element_id="mlflow_stop_btn",
     )
     _ = notifier.send_schema_card_with_message_id(card=card)

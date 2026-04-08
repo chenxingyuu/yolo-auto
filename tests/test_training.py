@@ -91,6 +91,38 @@ def test_start_training_success(
     assert "640" in body and "16" in body and "Epochs" in body
 
 
+def test_start_training_card_contains_mlflow_button_when_url_provided(
+    mock_ssh: MagicMock,
+    mock_notifier: MagicMock,
+    state_store,
+) -> None:
+    mock_ssh.execute.return_value = ("", "", 0)
+    mock_ssh.execute_background.return_value = ("12345", 0)
+
+    req = _make_req("job-mlflow-btn")
+    result = start_training(
+        req,
+        mock_ssh,
+        mock_notifier,
+        state_store,
+        mlflow_url="http://mlflow.local/#/experiments/1",
+    )
+
+    assert result["ok"] is True
+    card = mock_notifier.send_schema_card_with_message_id.call_args.kwargs["card"]
+    body_elements = card["body"]["elements"]
+    assert any(
+        element.get("tag") == "column_set"
+        and any(
+            col.get("tag") == "column"
+            and any(btn.get("tag") == "button" for btn in col.get("elements", []))
+            for col in element.get("columns", [])
+        )
+        for element in body_elements
+        if isinstance(element, dict)
+    )
+
+
 def test_start_training_dataset_provenance_tags(
     mock_ssh: MagicMock,
     mock_notifier: MagicMock,
