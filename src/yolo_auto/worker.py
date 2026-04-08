@@ -4,7 +4,7 @@ from __future__ import annotations
 #
 # 该脚本会不断轮询本地 `yolo_state_file`（默认 `.state/jobs.db`）里的任务状态：
 # - 对状态为 `RUNNING` 的任务，调用 `get_status(...)` 拉取训练结果/指标，
-#   更新 MLflow，并按配置向飞书推送训练里程碑。
+#   并按配置向飞书推送训练里程碑。
 #
 # 建议同一时间只运行一个 Worker；本脚本使用 `YOLO_WATCH_LOCK_FILE` 做进程间排他锁
 # （基于 `fcntl.flock`）。
@@ -20,8 +20,6 @@ from __future__ import annotations
 # - `FEISHU_WEBHOOK_URL`：飞书机器人 Webhook
 # - `FEISHU_REPORT_ENABLE` / `FEISHU_REPORT_EVERY_N_EPOCHS`：是否启用里程碑推送与推送频率
 # - `YOLO_PRIMARY_METRIC`：主指标名（写入里程碑文案）
-# - `MLFLOW_TRACKING_URI` / `MLFLOW_EXPERIMENT_NAME`：MLflow 追踪配置
-#
 # SSH 连接配置：
 # - 优先使用 `YOLO_SSH_ENVS`（JSON 对象，支持为不同 `env_id` 配置不同主机）
 # - 或回退使用 `YOLO_SSH_HOST` / `YOLO_SSH_PORT` / `YOLO_SSH_USER`
@@ -37,9 +35,7 @@ from yolo_auto.feishu import FeishuNotifier
 from yolo_auto.models import JobStatus
 from yolo_auto.ssh_client import SSHClient, SSHConfig
 from yolo_auto.state_store import JobStateStore
-from yolo_auto.tools.mlflow_grouping import dataset_scope_key, path_stem
 from yolo_auto.tools.status import get_status
-from yolo_auto.tracker import MLflowTracker, TrackerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -118,28 +114,17 @@ def main() -> None:
         app_secret=settings.feishu_app_secret,
         chat_id=settings.feishu_chat_id,
     )
-    tracker = MLflowTracker(
-        TrackerConfig(
-            tracking_uri=settings.mlflow_tracking_uri,
-            experiment_name=settings.mlflow_experiment_name,
-            external_url=settings.mlflow_external_url,
-            model_registry_enable=settings.mlflow_model_registry_enable,
-            model_name_template=settings.mlflow_model_name_template,
-        )
-    )
     store = JobStateStore(settings.yolo_state_file)
     lock_path = Path(settings.watch_lock_file)
     logger.info(
         "yolo-auto-watch starting state_file=%s lock_file=%s poll_interval_s=%s "
-        "feishu_report=%s every_n_epochs=%s primary_metric=%s mlflow_uri=%s experiment=%s",
+        "feishu_report=%s every_n_epochs=%s primary_metric=%s",
         settings.yolo_state_file,
         settings.watch_lock_file,
         settings.watch_poll_interval_seconds,
         settings.feishu_report_enable,
         settings.feishu_report_every_n_epochs,
         settings.primary_metric_key,
-        settings.mlflow_tracking_uri,
-        settings.mlflow_experiment_name,
     )
     poll_seq = 0
     while True:
@@ -187,11 +172,6 @@ def main() -> None:
                         job.job_id,
                         job.env_id,
                     )
-                model_registry_name = tracker.build_model_name(
-                    env_id=job.env_id,
-                    data_key=dataset_scope_key(job.paths.get("dataConfigPath", "")),
-                    model_key=path_stem(job.paths.get("modelPath", "")),
-                )
                 logger.info(
                     "get_status begin poll=#%s job_id=%s run_id=%s env_id=%r ssh=%s "
                     "pid=%s metricsPath=%s",
@@ -210,15 +190,12 @@ def main() -> None:
                         job.run_id,
                         store,
                         ssh_client,
-                        tracker,
                         notifier,
                         feishu_report_enable=settings.feishu_report_enable,
                         feishu_report_every_n_epochs=settings.feishu_report_every_n_epochs,
                         primary_metric_key=settings.primary_metric_key,
                         feishu_card_img_key=settings.feishu_card_img_key,
                         feishu_card_fallback_img_key=settings.feishu_card_fallback_img_key,
-                        model_registry_enable=settings.mlflow_model_registry_enable,
-                        model_registry_name=model_registry_name,
                     )
                     elapsed_ms = int((time.monotonic() - t0) * 1000)
                     if not bool(result.get("ok", True)):

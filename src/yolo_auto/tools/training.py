@@ -10,15 +10,10 @@ from yolo_auto.feishu import FeishuNotifier
 from yolo_auto.models import JobRecord, JobStatus
 from yolo_auto.ssh_client import SSHClient, SSHRemoteExecutionError
 from yolo_auto.state_store import JobStateStore
-from yolo_auto.tools.mlflow_grouping import (
-    build_training_group_tags,
-    mlflow_tags_for_dataset_provenance,
-)
 from yolo_auto.tools.status import (
     build_schema_card_with_mlflow_button,
     build_training_started_schema_card,
 )
-from yolo_auto.tracker import MLflowTracker
 
 
 @dataclass(frozen=True)
@@ -137,7 +132,6 @@ def start_training(
     req: TrainRequest,
     ssh_client: SSHClient,
     notifier: FeishuNotifier,
-    tracker: MLflowTracker,
     state_store: JobStateStore,
     *,
     feishu_card_img_key: str | None = None,
@@ -160,33 +154,8 @@ def start_training(
             payload={"jobId": req.job_id, "modelPath": model_abs_path},
         )
 
-    group_tags = build_training_group_tags(
-        job_id=req.job_id,
-        env_id=req.env_id,
-        model_path=req.model,
-        data_config_path=req.data_config_path,
-    )
     ds_prov = _dataset_provenance_from_request(req)
-    group_tags.update(mlflow_tags_for_dataset_provenance(ds_prov))
-    mlflow_cfg: dict[str, Any] = {
-        "env_id": req.env_id,
-        "model": req.model,
-        "data_config_path": req.data_config_path,
-        "epochs": req.epochs,
-        "img_size": req.img_size,
-        "batch": req.batch,
-    }
-    if req.learning_rate is not None:
-        mlflow_cfg["learning_rate"] = req.learning_rate
-    if ds_prov:
-        for k, v in ds_prov.items():
-            mlflow_cfg[f"dataset_{k}"] = v
-    mlflow_cfg.update(req.extra_args or {})
-    run_id = tracker.start_run(
-        job_id=req.job_id,
-        config=mlflow_cfg,
-        tags=group_tags,
-    )
+    run_id = req.job_id
     job_dir = f"{req.jobs_dir}/{req.job_id}"
     log_path = f"{job_dir}/train.log"
     data_abs_path = _resolve_remote_path(req.data_config_path, req.work_dir)
@@ -243,7 +212,6 @@ def start_training(
         dataset_provenance=ds_prov,
     )
     state_store.upsert(record)
-    mlflow_url = tracker.get_run_url(run_id)
     ex = req.extra_args or {}
     fourth_label, fourth_val = _fourth_metric_for_start_card(req.extra_args)
     optimizer_auto = _is_optimizer_auto(req.extra_args)
@@ -267,7 +235,7 @@ def start_training(
         extra_params_line=_extra_params_line_for_start_card(req.extra_args),
         optimizer_auto_notice=_OPTIMIZER_AUTO_NOTICE if optimizer_auto else None,
         started_time_text=started_text,
-        mlflow_url=mlflow_url,
+        mlflow_url=None,
         top_img_key=feishu_card_img_key,
         top_img_fallback_key=feishu_card_fallback_img_key,
     )
@@ -283,7 +251,6 @@ def stop_training(
     run_id: str,
     ssh_client: SSHClient,
     notifier: FeishuNotifier,
-    tracker: MLflowTracker,
     state_store: JobStateStore,
 ) -> dict[str, object]:
     now = int(time.time())
@@ -295,7 +262,6 @@ def stop_training(
     pid = record.pid if record else ""
     if pid and not ssh_client.process_alive(pid):
         updated = state_store.update_status(job_id, JobStatus.STOPPED, now) if record else None
-        tracker.kill_run(effective_run_id)
         if updated:
             return ok(updated.to_dict())
         return ok({"jobId": job_id, "runId": effective_run_id, "status": JobStatus.STOPPED.value})
@@ -311,16 +277,14 @@ def stop_training(
             payload={"jobId": job_id, "runId": effective_run_id},
         )
 
-    tracker.kill_run(effective_run_id)
     if record:
         updated = state_store.update_status(job_id, JobStatus.STOPPED, now)
         if updated.last_notified_state != JobStatus.STOPPED:
-            mlflow_url = tracker.get_run_url(effective_run_id)
             card = build_schema_card_with_mlflow_button(
                 title="[YOLO] 训练已停止",
                 header_template="orange",
                 md_text=f"job={job_id}\nrunId={effective_run_id}",
-                mlflow_url=mlflow_url,
+                mlflow_url=None,
                 button_element_id="mlflow_stop_btn",
             )
             message_id = notifier.send_schema_card_with_message_id(card=card)
@@ -328,12 +292,11 @@ def stop_training(
                 state_store.mark_feishu_message(job_id, message_id, now)
             state_store.mark_notified(job_id, JobStatus.STOPPED, now)
         return ok(updated.to_dict())
-    mlflow_url = tracker.get_run_url(effective_run_id)
     card = build_schema_card_with_mlflow_button(
         title="[YOLO] 训练已停止",
         header_template="orange",
         md_text=f"job={job_id}\nrunId={effective_run_id}",
-        mlflow_url=mlflow_url,
+        mlflow_url=None,
         button_element_id="mlflow_stop_btn",
     )
     _ = notifier.send_schema_card_with_message_id(card=card)

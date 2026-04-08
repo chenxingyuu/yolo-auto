@@ -10,7 +10,6 @@ from yolo_auto.feishu import FeishuNotifier
 from yolo_auto.models import JobStatus
 from yolo_auto.ssh_client import SSHClient
 from yolo_auto.state_store import JobStateStore
-from yolo_auto.tools.mlflow_grouping import mlflow_filter_same_training_scope
 from yolo_auto.tools.status import build_schema_card_with_mlflow_button, get_status
 from yolo_auto.tools.training import TrainRequest, start_training
 from yolo_auto.tracker import MLflowTracker
@@ -63,7 +62,7 @@ def auto_tune(
             jobs_dir=req.jobs_dir,
             env_id=req.env_id,
         )
-        train_result = start_training(train_req, ssh_client, notifier, tracker, state_store)
+        train_result = start_training(train_req, ssh_client, notifier, state_store)
         if not train_result.get("ok", False):
             trials.append(
                 {
@@ -85,7 +84,6 @@ def auto_tune(
                 run_id,
                 state_store,
                 ssh_client,
-                tracker,
                 notifier,
                 feishu_report_enable=req.feishu_report_enable,
                 feishu_report_every_n_epochs=req.feishu_report_every_n_epochs,
@@ -148,21 +146,14 @@ def auto_tune(
             payload={"envId": req.env_id, "baseJobId": req.base_job_id, "trials": trials},
         )
     best_trial = max(succeeded_trials, key=lambda item: item["metric"])
-    scope_filter = mlflow_filter_same_training_scope(
-        env_id=req.env_id,
-        model_path=req.model,
-        data_config_path=req.data_config_path,
-    )
     mlflow_top = tracker.summarize_top_runs(
         req.primary_metric_key,
         limit=5,
-        filter_string=scope_filter,
     )
     best_mlflow = mlflow_top[0] if mlflow_top else None
     disagreement = False
     if best_mlflow is not None:
         disagreement = abs(float(best_mlflow["metric"]) - float(best_trial["metric"])) > 1e-4
-
     try:
         exp_url = tracker.get_experiment_url()
         card = build_schema_card_with_mlflow_button(

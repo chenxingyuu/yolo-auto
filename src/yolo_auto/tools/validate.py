@@ -2,16 +2,12 @@ from __future__ import annotations
 
 import re
 import shlex
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from yolo_auto.errors import err, ok
 from yolo_auto.models import JobStatus
 from yolo_auto.ssh_client import SSHClient
 from yolo_auto.state_store import JobStateStore
-from yolo_auto.tools.model_ref import parse_model_ref, resolve_model_ref_to_record
-
-if TYPE_CHECKING:
-    from yolo_auto.tracker import MLflowTracker
 
 _ALL_LINE_RE = re.compile(
     r"^\s*all\s+\d+\s+\d+\s+([0-9]*\.?[0-9]+)\s+([0-9]*\.?[0-9]+)\s+([0-9]*\.?[0-9]+)\s+([0-9]*\.?[0-9]+)\s*$",
@@ -59,7 +55,7 @@ def _parse_val_stdout(stdout: str) -> dict[str, float] | None:
 
 
 def run_validation(
-    job_id: str | None,
+    job_id: str,
     state_store: JobStateStore,
     ssh_client: SSHClient,
     jobs_dir: str,
@@ -70,60 +66,14 @@ def run_validation(
     batch: int | None = None,
     device: str | None = None,
     extra_args: dict[str, Any] | None = None,
-    model_ref: str | None = None,
-    registry_tracker: MLflowTracker | None = None,
-    mlflow_tracker: MLflowTracker | None = None,
-    log_to_mlflow: bool = True,
 ) -> dict[str, object]:
-    model_ref_meta: dict[str, str] | None = None
-    effective_job_id = (job_id or "").strip() or None
-    raw_ref = (model_ref or "").strip()
-
-    if raw_ref:
-        if registry_tracker is None:
-            return err(
-                error_code="MODEL_REF_UNSUPPORTED",
-                message="modelRef 需要启用模型注册并传入 tracker",
-                retryable=False,
-                hint="设置 MLFLOW_MODEL_REGISTRY_ENABLE=true",
-                payload={},
-            )
-        parsed = parse_model_ref(raw_ref)
-        if not parsed:
-            return err(
-                error_code="INVALID_MODEL_REF",
-                message=f"无法解析 modelRef: {raw_ref}",
-                retryable=False,
-                hint="示例：`yolo-default-coco-yolo11n:approved` 或 `registry:name:alias`",
-                payload={"modelRef": raw_ref},
-            )
-        name, alias = parsed
-        resolved = resolve_model_ref_to_record(
-            registry_tracker,
-            state_store,
-            model_name=name,
-            alias=alias,
-        )
-        if not resolved:
-            return err(
-                error_code="MODEL_REF_UNRESOLVED",
-                message="registry alias 无法解析到本地 job（需同机状态库中仍有对应 runId）",
-                retryable=False,
-                hint="请改用 jobId，或确认该版本训练任务仍在 YOLO_STATE_FILE 中",
-                payload={"modelRef": raw_ref, "modelName": name, "alias": alias},
-            )
-        effective_job_id = resolved.job_id
-        model_ref_meta = {
-            "modelName": name,
-            "alias": alias,
-            "resolvedJobId": effective_job_id,
-        }
-    elif not effective_job_id:
+    effective_job_id = (job_id or "").strip()
+    if not effective_job_id:
         return err(
-            error_code="MISSING_JOB_OR_MODEL_REF",
-            message="jobId 与 modelRef 至少填一个",
+            error_code="MISSING_JOB_ID",
+            message="jobId 不能为空",
             retryable=False,
-            hint='示例 modelRef：`yolo-default-coco-yolo11n:approved`',
+            hint="请传入训练任务 jobId",
             payload={},
         )
 
@@ -221,19 +171,4 @@ def run_validation(
         "metrics": metrics,
         "rawOutput": stdout_text,
     }
-    if model_ref_meta:
-        out["modelRef"] = model_ref_meta
-    if log_to_mlflow and mlflow_tracker is not None and record.run_id.strip():
-        val_metrics = {
-            "val_precision": metrics["precision"],
-            "val_recall": metrics["recall"],
-            "val_map50": metrics["map50"],
-            "val_map5095": metrics["map5095"],
-        }
-        try:
-            mlflow_tracker.log_validation_metrics(record.run_id, val_metrics)
-            out["mlflowValidationLogged"] = True
-        except Exception as exc:
-            out["mlflowValidationLogged"] = False
-            out["mlflowLogWarning"] = str(exc)
     return ok(out)

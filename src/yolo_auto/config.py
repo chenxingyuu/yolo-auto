@@ -26,9 +26,6 @@ class Settings:
     mlflow_tracking_uri: str
     mlflow_experiment_name: str
     mlflow_external_url: str | None
-    mlflow_leaderboard_filter: str | None
-    mlflow_model_registry_enable: bool
-    mlflow_model_name_template: str
     yolo_work_dir: str
     yolo_datasets_dir: str
     yolo_jobs_dir: str
@@ -36,7 +33,6 @@ class Settings:
     yolo_state_file: str
     watch_poll_interval_seconds: int
     watch_lock_file: str
-    yolo_validate_log_to_mlflow: bool
 
 
 @dataclass(frozen=True)
@@ -146,17 +142,12 @@ def load_settings() -> Settings:
             "FEISHU_CARD_FALLBACK_IMG_KEY"
         ),
         primary_metric_key=_get_env("YOLO_PRIMARY_METRIC", "map5095"),
-        mlflow_tracking_uri=_get_env("MLFLOW_TRACKING_URI", "sqlite:////data/mlflow/mlflow.db"),
+        mlflow_tracking_uri=_get_env(
+            "MLFLOW_TRACKING_URI",
+            "sqlite:////data/mlflow/mlflow.db",
+        ),
         mlflow_experiment_name=_get_env("MLFLOW_EXPERIMENT_NAME", "yolo-auto"),
         mlflow_external_url=_get_env_optional("MLFLOW_EXTERNAL_URL"),
-        mlflow_leaderboard_filter=_get_env_optional("MLFLOW_LEADERBOARD_FILTER"),
-        mlflow_model_registry_enable=_env_truthy(
-            _get_env("MLFLOW_MODEL_REGISTRY_ENABLE", "false")
-        ),
-        mlflow_model_name_template=_get_env(
-            "MLFLOW_MODEL_NAME_TEMPLATE",
-            "yolo-{env}-{data}",
-        ),
         yolo_work_dir=_get_env("YOLO_WORK_DIR", "/workspace/yolo-auto"),
         yolo_datasets_dir=_get_env("YOLO_DATASETS_DIR", "/workspace/datasets"),
         yolo_jobs_dir=_get_env("YOLO_JOBS_DIR", "/workspace/jobs"),
@@ -166,8 +157,5 @@ def load_settings() -> Settings:
             5, int(_get_env("YOLO_WATCH_POLL_INTERVAL_SECONDS", "30"))
         ),
         watch_lock_file=_get_env("YOLO_WATCH_LOCK_FILE", ".state/watch.lock"),
-        yolo_validate_log_to_mlflow=_env_truthy(
-            _get_env("YOLO_VALIDATE_LOG_TO_MLFLOW", "true")
-        ),
     )
 

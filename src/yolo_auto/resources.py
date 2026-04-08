@@ -51,14 +51,6 @@ def register_resources(
                 "jobsDir": settings.yolo_jobs_dir,
                 "modelsDir": settings.yolo_models_dir,
                 "stateFile": settings.yolo_state_file,
-                "mlflow": {
-                    "trackingUri": settings.mlflow_tracking_uri,
-                    "experimentName": settings.mlflow_experiment_name,
-                    "externalUrl": settings.mlflow_external_url,
-                    "leaderboardFilter": settings.mlflow_leaderboard_filter,
-                    "modelRegistryEnable": settings.mlflow_model_registry_enable,
-                    "modelNameTemplate": settings.mlflow_model_name_template,
-                },
                 "feishu": {
                     "reportEnable": settings.feishu_report_enable,
                     "reportEveryNEpochs": settings.feishu_report_every_n_epochs,
@@ -66,7 +58,6 @@ def register_resources(
                     "mode": feishu_mode,
                 },
                 "primaryMetric": settings.primary_metric_key,
-                "validateLogToMlflow": settings.yolo_validate_log_to_mlflow,
                 "watchPollIntervalSeconds": settings.watch_poll_interval_seconds,
             },
             ensure_ascii=False,
@@ -108,25 +99,36 @@ def register_resources(
         )
 
     @mcp.resource(
+        "yolo://mlflow/experiments",
+        name="mlflow-experiments",
+        description="MLflow experiments 列表（只读）。",
+        mime_type="application/json",
+    )
+    def resource_mlflow_experiments() -> str:
+        experiments = tracker.list_experiments(max_results=200)
+        return json.dumps(
+            {
+                "experiments": experiments,
+                "count": len(experiments),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    @mcp.resource(
         "yolo://mlflow/leaderboard",
         name="mlflow-leaderboard",
-        description=(
-            "MLflow 实验中按主指标排序的 Top 10 runs；"
-            "可选环境变量 MLFLOW_LEADERBOARD_FILTER（MLflow search_runs 的 "
-            "filter_string 语法）缩小范围。"
-        ),
+        description="MLflow 实验中按主指标排序的 Top 10 runs（只读）。",
         mime_type="application/json",
     )
     def resource_mlflow_leaderboard() -> str:
         top_runs = tracker.summarize_top_runs(
             settings.primary_metric_key,
             limit=10,
-            filter_string=settings.mlflow_leaderboard_filter,
         )
         return json.dumps(
             {
                 "metricKey": settings.primary_metric_key,
-                "filter": settings.mlflow_leaderboard_filter,
                 "topRuns": top_runs,
                 "count": len(top_runs),
             },
@@ -137,7 +139,7 @@ def register_resources(
     @mcp.resource(
         "yolo://models/registry",
         name="registered-models",
-        description="MLflow Model Registry 摘要（模型名、aliases、最新版本与 run）。",
+        description="MLflow Model Registry 摘要（只读）。",
         mime_type="application/json",
     )
     def resource_registered_models() -> str:
@@ -164,8 +166,7 @@ def register_resources(
             )
         return json.dumps(
             {
-                "enabled": settings.mlflow_model_registry_enable,
-                "modelNameTemplate": settings.mlflow_model_name_template,
+                "enabled": True,
                 "primaryMetricKey": settings.primary_metric_key,
                 "models": enriched,
                 "count": len(enriched),

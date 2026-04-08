@@ -42,7 +42,6 @@ def test_delete_job_not_found(state_store) -> None:
 def test_get_job_refresh_parses_args_yaml_and_persists_train_params(
     state_store,
     mock_ssh,
-    mock_tracker,
     mock_notifier,
     monkeypatch,
 ) -> None:
@@ -78,7 +77,6 @@ def test_get_job_refresh_parses_args_yaml_and_persists_train_params(
         "job-args",
         state_store,
         {"default": mock_ssh},
-        mock_tracker,
         mock_notifier,
         refresh=True,
     )
@@ -97,7 +95,6 @@ def test_get_job_refresh_parses_args_yaml_and_persists_train_params(
 def test_get_job_refresh_missing_args_yaml_does_not_error(
     state_store,
     mock_ssh,
-    mock_tracker,
     mock_notifier,
     monkeypatch,
 ) -> None:
@@ -126,7 +123,6 @@ def test_get_job_refresh_missing_args_yaml_does_not_error(
         "job-noargs",
         state_store,
         {"default": mock_ssh},
-        mock_tracker,
         mock_notifier,
         refresh=True,
     )
@@ -139,7 +135,6 @@ def test_get_job_refresh_missing_args_yaml_does_not_error(
 def test_get_job_refresh_invalid_yaml_does_not_persist_train_params(
     state_store,
     mock_ssh,
-    mock_tracker,
     mock_notifier,
     monkeypatch,
 ) -> None:
@@ -168,7 +163,6 @@ def test_get_job_refresh_invalid_yaml_does_not_persist_train_params(
         "job-badyaml",
         state_store,
         {"default": mock_ssh},
-        mock_tracker,
         mock_notifier,
         refresh=True,
     )

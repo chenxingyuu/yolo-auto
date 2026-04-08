@@ -3,16 +3,12 @@ from __future__ import annotations
 import json
 import shlex
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from yolo_auto.errors import err, ok
 from yolo_auto.models import JobStatus
 from yolo_auto.ssh_client import SSHClient
 from yolo_auto.state_store import JobStateStore
-from yolo_auto.tools.model_ref import parse_model_ref, resolve_model_ref_to_record
-
-if TYPE_CHECKING:
-    from yolo_auto.tracker import MLflowTracker
 
 
 def _format_yolo_value(value: Any) -> str:
@@ -73,7 +69,7 @@ def _find_export_artifacts(
 
 
 def run_export(
-    job_id: str | None,
+    job_id: str,
     state_store: JobStateStore,
     ssh_client: SSHClient,
     jobs_dir: str,
@@ -85,58 +81,14 @@ def run_export(
     int8: bool | None = None,
     device: str | None = None,
     extra_args: dict[str, Any] | None = None,
-    model_ref: str | None = None,
-    registry_tracker: MLflowTracker | None = None,
 ) -> dict[str, object]:
-    model_ref_meta: dict[str, str] | None = None
-    effective_job_id = (job_id or "").strip() or None
-    raw_ref = (model_ref or "").strip()
-
-    if raw_ref:
-        if registry_tracker is None:
-            return err(
-                error_code="MODEL_REF_UNSUPPORTED",
-                message="modelRef 需要启用模型注册并传入 tracker",
-                retryable=False,
-                hint="设置 MLFLOW_MODEL_REGISTRY_ENABLE=true",
-                payload={},
-            )
-        parsed = parse_model_ref(raw_ref)
-        if not parsed:
-            return err(
-                error_code="INVALID_MODEL_REF",
-                message=f"无法解析 modelRef: {raw_ref}",
-                retryable=False,
-                hint="示例：`yolo-default-coco-yolo11n:approved`",
-                payload={"modelRef": raw_ref},
-            )
-        name, alias = parsed
-        resolved = resolve_model_ref_to_record(
-            registry_tracker,
-            state_store,
-            model_name=name,
-            alias=alias,
-        )
-        if not resolved:
-            return err(
-                error_code="MODEL_REF_UNRESOLVED",
-                message="registry alias 无法解析到本地 job",
-                retryable=False,
-                hint="请改用 jobId，或确认该版本训练任务仍在 YOLO_STATE_FILE 中",
-                payload={"modelRef": raw_ref, "modelName": name, "alias": alias},
-            )
-        effective_job_id = resolved.job_id
-        model_ref_meta = {
-            "modelName": name,
-            "alias": alias,
-            "resolvedJobId": effective_job_id,
-        }
-    elif not effective_job_id:
+    effective_job_id = (job_id or "").strip()
+    if not effective_job_id:
         return err(
-            error_code="MISSING_JOB_OR_MODEL_REF",
-            message="jobId 与 modelRef 至少填一个",
+            error_code="MISSING_JOB_ID",
+            message="jobId 不能为空",
             retryable=False,
-            hint='示例 modelRef：`yolo-default-coco-yolo11n:approved`',
+            hint="请传入训练任务 jobId",
             payload={},
         )
 
@@ -244,8 +196,6 @@ def run_export(
         "errors": export_errors,
         "exportedAt": exported_at,
     }
-    if model_ref_meta:
-        out["modelRef"] = model_ref_meta
     manifest: dict[str, Any] = {
         "schema": "yolo-auto.export-manifest/v1",
         "jobId": effective_job_id,

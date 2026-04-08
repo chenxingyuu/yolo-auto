@@ -14,9 +14,7 @@ from yolo_auto.models import JobRecord, JobStatus
 from yolo_auto.ssh_client import SSHClient
 from yolo_auto.state_store import JobStateStore
 from yolo_auto.tools.metrics_csv import parse_training_row
-from yolo_auto.tools.mlflow_grouping import dataset_scope_key, path_stem
 from yolo_auto.tools.status import get_status
-from yolo_auto.tracker import MLflowTracker
 
 
 def _ssh_for_record(
@@ -71,7 +69,6 @@ def get_job(
     job_id: str,
     state_store: JobStateStore,
     ssh_clients_by_env: dict[str, SSHClient],
-    tracker: MLflowTracker,
     notifier: FeishuNotifier,
     *,
     refresh: bool = False,
@@ -80,7 +77,6 @@ def get_job(
     primary_metric_key: str = "map5095",
     feishu_card_img_key: str | None = None,
     feishu_card_fallback_img_key: str | None = None,
-    model_registry_enable: bool = False,
 ) -> dict[str, Any]:
     record = state_store.get(job_id)
     if not record:
@@ -99,21 +95,12 @@ def get_job(
             record.run_id,
             state_store,
             ssh_client,
-            tracker,
             notifier,
             feishu_report_enable=feishu_report_enable,
             feishu_report_every_n_epochs=feishu_report_every_n_epochs,
             primary_metric_key=primary_metric_key,
             feishu_card_img_key=feishu_card_img_key,
             feishu_card_fallback_img_key=feishu_card_fallback_img_key,
-            model_registry_enable=model_registry_enable,
-            model_registry_name=tracker.build_model_name(
-                env_id=record.env_id,
-                data_key=dataset_scope_key(record.paths.get("dataConfigPath", "")),
-                model_key=path_stem(record.paths.get("modelPath", "")),
-            )
-            if model_registry_enable
-            else None,
         )
         payload["liveStatus"] = status_payload
         refreshed = state_store.get(job_id) or record

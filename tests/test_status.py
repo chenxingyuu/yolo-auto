@@ -75,7 +75,6 @@ def test_training_rows_to_chart_spec_builds_line_spec() -> None:
 
 def test_get_status_job_not_found(
     mock_ssh: MagicMock,
-    mock_tracker: MagicMock,
     mock_notifier: MagicMock,
     state_store,
 ) -> None:
@@ -84,7 +83,6 @@ def test_get_status_job_not_found(
         run_id="run-1",
         state_store=state_store,
         ssh_client=mock_ssh,
-        tracker=mock_tracker,
         notifier=mock_notifier,
     )
     assert result["ok"] is False
@@ -93,7 +91,6 @@ def test_get_status_job_not_found(
 
 def test_get_status_csv_not_ready_process_alive(
     mock_ssh: MagicMock,
-    mock_tracker: MagicMock,
     mock_notifier: MagicMock,
     state_store,
 ) -> None:
@@ -109,7 +106,6 @@ def test_get_status_csv_not_ready_process_alive(
         run_id="run-1",
         state_store=state_store,
         ssh_client=mock_ssh,
-        tracker=mock_tracker,
         notifier=mock_notifier,
     )
 
@@ -122,7 +118,6 @@ def test_get_status_csv_not_ready_process_alive(
 
 def test_get_status_running_with_metrics(
     mock_ssh: MagicMock,
-    mock_tracker: MagicMock,
     mock_notifier: MagicMock,
     state_store,
 ) -> None:
@@ -138,7 +133,6 @@ def test_get_status_running_with_metrics(
         run_id="run-1",
         state_store=state_store,
         ssh_client=mock_ssh,
-        tracker=mock_tracker,
         notifier=mock_notifier,
     )
 
@@ -162,7 +156,6 @@ def test_get_status_running_with_metrics(
 
 def test_get_status_completed(
     mock_ssh: MagicMock,
-    mock_tracker: MagicMock,
     mock_notifier: MagicMock,
     state_store,
 ) -> None:
@@ -177,19 +170,16 @@ def test_get_status_completed(
         run_id="run-1",
         state_store=state_store,
         ssh_client=mock_ssh,
-        tracker=mock_tracker,
         notifier=mock_notifier,
     )
 
     assert result["ok"] is True
     assert result["status"] == JobStatus.COMPLETED.value
     assert result["progress"] == 1.0
-    mock_tracker.finish_run.assert_called()
 
 
 def test_get_status_milestone_message_contains_eta_and_delta(
     mock_ssh: MagicMock,
-    mock_tracker: MagicMock,
     mock_notifier: MagicMock,
     state_store,
 ) -> None:
@@ -205,7 +195,6 @@ def test_get_status_milestone_message_contains_eta_and_delta(
         run_id="run-1",
         state_store=state_store,
         ssh_client=mock_ssh,
-        tracker=mock_tracker,
         notifier=mock_notifier,
         feishu_report_enable=True,
         feishu_report_every_n_epochs=5,
@@ -231,7 +220,6 @@ def test_get_status_milestone_message_contains_eta_and_delta(
 
 def test_get_status_card_supports_configurable_top_image(
     mock_ssh: MagicMock,
-    mock_tracker: MagicMock,
     mock_notifier: MagicMock,
     state_store,
 ) -> None:
@@ -247,7 +235,6 @@ def test_get_status_card_supports_configurable_top_image(
         run_id="run-1",
         state_store=state_store,
         ssh_client=mock_ssh,
-        tracker=mock_tracker,
         notifier=mock_notifier,
         feishu_card_img_key="img_v3_demo",
         feishu_card_fallback_img_key="img_v3_fb",
@@ -271,7 +258,6 @@ def test_get_status_card_supports_configurable_top_image(
 
 def test_get_status_updates_existing_card_then_no_resend(
     mock_ssh: MagicMock,
-    mock_tracker: MagicMock,
     mock_notifier: MagicMock,
     state_store,
 ) -> None:
@@ -288,7 +274,6 @@ def test_get_status_updates_existing_card_then_no_resend(
         run_id="run-1",
         state_store=state_store,
         ssh_client=mock_ssh,
-        tracker=mock_tracker,
         notifier=mock_notifier,
         feishu_report_enable=True,
     )
@@ -300,7 +285,6 @@ def test_get_status_updates_existing_card_then_no_resend(
 
 def test_get_status_fallback_resend_when_update_fails(
     mock_ssh: MagicMock,
-    mock_tracker: MagicMock,
     mock_notifier: MagicMock,
     state_store,
 ) -> None:
@@ -318,7 +302,6 @@ def test_get_status_fallback_resend_when_update_fails(
         run_id="run-1",
         state_store=state_store,
         ssh_client=mock_ssh,
-        tracker=mock_tracker,
         notifier=mock_notifier,
         feishu_report_enable=True,
     )

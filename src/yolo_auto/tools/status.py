@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import csv
 import logging
-import os
 import shlex
 import time
 from io import BytesIO, StringIO
@@ -15,7 +14,6 @@ from yolo_auto.models import JobStatus
 from yolo_auto.ssh_client import SSHClient, SSHRemoteExecutionError
 from yolo_auto.state_store import JobStateStore
 from yolo_auto.tools.metrics_csv import metric_value_from_parsed, parse_training_row
-from yolo_auto.tracker import MLflowTracker
 
 logger = logging.getLogger(__name__)
 
@@ -649,7 +647,6 @@ def get_status(
     run_id: str,
     state_store: JobStateStore,
     ssh_client: SSHClient,
-    tracker: MLflowTracker,
     notifier: FeishuNotifier,
     *,
     feishu_report_enable: bool = True,
@@ -657,8 +654,6 @@ def get_status(
     primary_metric_key: str = "map5095",
     feishu_card_img_key: str | None = None,
     feishu_card_fallback_img_key: str | None = None,
-    model_registry_enable: bool = False,
-    model_registry_name: str | None = None,
 ) -> dict[str, object]:
     now = int(time.time())
     record = state_store.get(job_id)
@@ -672,7 +667,7 @@ def get_status(
         )
 
     effective_run_id = record.run_id or run_id
-    mlflow_url = tracker.get_run_url(effective_run_id)
+    mlflow_url = None
     metrics_path = (record.paths.get("metricsPath") or "").strip()
     if not metrics_path:
         return err(
@@ -745,7 +740,6 @@ def get_status(
                 hint="查看远程 train.log 定位错误并修复数据或参数",
                 payload=updated.to_dict(),
             )
-        tracker.finish_run(effective_run_id, updated.paths.get("bestPath"))
         return ok(updated.to_dict())
 
     rows = list(csv.DictReader(StringIO(content)))
@@ -769,17 +763,6 @@ def get_status(
     loss = float(parsed["loss"])
     primary_value = metric_value_from_parsed(parsed, primary_metric_key)
 
-    tracker.log_epoch(
-        run_id=effective_run_id,
-        metrics={
-            "loss": loss,
-            "map50": map50,
-            "map5095": map5095,
-            "precision": precision,
-            "recall": recall,
-        },
-        step=epoch,
-    )
     record = state_store.mark_metrics(job_id, now)
     total_epochs = max(record.train_epochs or 100, 1)
     progress = round(min(1.0, epoch / total_epochs), 4)
@@ -831,44 +814,6 @@ def get_status(
 
     if not process_alive:
         updated = state_store.update_status(job_id, JobStatus.COMPLETED, now)
-        tracker.finish_run(effective_run_id, updated.paths.get("bestPath"))
-        registry_info: dict[str, Any] | None = None
-        if model_registry_enable and model_registry_name:
-            best_path = updated.paths.get("bestPath", "").strip()
-            artifact_name = os.path.basename(best_path) if best_path else "best.pt"
-            try:
-                registry_info = tracker.register_model_from_run(
-                    run_id=effective_run_id,
-                    model_name=model_registry_name,
-                    artifact_subpath=artifact_name or "best.pt",
-                    tags={"jobId": job_id},
-                    set_candidate_alias=True,
-                )
-            except Exception:
-                registry_info = {"ok": False, "error": "REGISTER_MODEL_FAILED"}
-        reg_md: str | None = None
-        reg_specs: list[tuple[str, str, str]] | None = None
-        if (
-            isinstance(registry_info, dict)
-            and registry_info.get("ok")
-            and model_registry_name
-        ):
-            vn = str(registry_info.get("version", ""))
-            reg_md = (
-                f"**模型注册** `{model_registry_name}` · v{vn}（candidate）\n"
-                f"设为推荐：在对话中调用 "
-                f"`yolo_promote_model_version`（modelName={model_registry_name!r}, "
-                f"version={vn!r}, alias=approved）"
-            )
-            reg_specs = []
-            u_model = tracker.get_registered_model_ui_url(model_registry_name)
-            if u_model:
-                reg_specs.append(("feishu_reg_model_btn", "打开模型注册", u_model))
-            u_ver = tracker.get_model_version_ui_url(model_registry_name, vn)
-            if u_ver:
-                reg_specs.append(("feishu_reg_ver_btn", "查看该版本", u_ver))
-            if not reg_specs:
-                reg_specs = None
         card = _build_training_schema_card(
             title="YOLO模型训练完成",
             header_template="green",
@@ -880,8 +825,6 @@ def get_status(
             top_img_key=feishu_card_img_key,
             top_img_fallback_key=feishu_card_fallback_img_key,
             training_rows=rows,
-            registry_markdown=reg_md,
-            registry_button_specs=reg_specs,
         )
         updated = _upsert_training_card(
             record=updated,
@@ -915,6 +858,5 @@ def get_status(
                 "best": record.paths.get("bestPath", ""),
                 "last": record.paths.get("lastPath", ""),
             },
-            "modelRegistry": registry_info if not process_alive else None,
         }
     )

@@ -59,7 +59,7 @@ def register_prompts(mcp: FastMCP) -> None:
             f"\n"
             f"4. 收到用户确认后，调用 yolo_start_training 启动训练（参数同上）\n"
             f"5. 启动成功后等待约 30 秒，调用 yolo_get_status 确认训练已开始运行\n"
-            f"6. 用一段简洁摘要回复：任务 ID、MLflow runId、关键参数、飞书是否已通知\n"
+            f"6. 用一段简洁摘要回复：任务 ID、runId、关键参数、飞书是否已通知\n"
         )
 
     @mcp.prompt(name="dashboard")
