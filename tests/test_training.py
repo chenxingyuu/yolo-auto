@@ -79,7 +79,9 @@ def test_start_training_success(
     assert stored.paths.get("dataConfigPath") == "/data/dataset.yaml"
     assert result["runId"] == "job-1"
     mock_ssh.execute_background.assert_called_once()
-    assert "lr0=0.01" in mock_ssh.execute_background.call_args[0][0]
+    command = mock_ssh.execute_background.call_args[0][0]
+    assert "MLFLOW_TRACKING_URI=sqlite:////workspace/mlflow.db" in command
+    assert "lr0=0.01" in command
     mock_notifier.send_schema_card_with_message_id.assert_called_once()
     kwargs = mock_notifier.send_schema_card_with_message_id.call_args.kwargs
     card = kwargs["card"]

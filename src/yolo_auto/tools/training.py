@@ -15,6 +15,8 @@ from yolo_auto.tools.status import (
     build_training_started_schema_card,
 )
 
+_FORCED_REMOTE_MLFLOW_TRACKING_URI = "sqlite:////workspace/mlflow.db"
+
 
 @dataclass(frozen=True)
 class TrainRequest:
@@ -163,6 +165,7 @@ def start_training(
     lr_cli = f" lr0={req.learning_rate}" if req.learning_rate is not None else ""
     train_cmd = (
         f"mkdir -p {job_dir} && cd {req.work_dir} && "
+        f"export MLFLOW_TRACKING_URI={_FORCED_REMOTE_MLFLOW_TRACKING_URI} && "
         f"yolo detect train model={req.model} data={req.data_config_path} "
         f"epochs={req.epochs} imgsz={req.img_size} batch={req.batch}{lr_cli} "
         # Ultralytics 默认会在目标目录已存在时自动给 name 追加数字后缀（如 xxx2）。
