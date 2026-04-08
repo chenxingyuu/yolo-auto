@@ -351,12 +351,12 @@ def yolo_start_training(
     device: Annotated[
         str | int | list[Any] | None,
         Field(
-            default=None,
+            default=0,
             description=(
                 "训练设备：如 0、cpu、mps；多卡可用列表。对应 Ultralytics 的 device=。"
             ),
         ),
-    ] = None,
+    ] = 0,
     patience: Annotated[
         int | None,
         Field(
@@ -367,10 +367,10 @@ def yolo_start_training(
     workers: Annotated[
         int | None,
         Field(
-            default=None,
+            default=8,
             description="DataLoader 线程数，对应 workers=。",
         ),
-    ] = None,
+    ] = 8,
     optimizer: Annotated[
         str | None,
         Field(
@@ -399,17 +399,17 @@ def yolo_start_training(
     cache: Annotated[
         bool | str | None,
         Field(
-            default=None,
+            default="disk",
             description="数据缓存：False、True/ram、disk 等，对应 cache=。",
         ),
-    ] = None,
+    ] = "disk",
     amp: Annotated[
         bool | None,
         Field(
-            default=None,
+            default=False,
             description="是否混合精度训练，对应 amp=。",
         ),
-    ] = None,
+    ] = False,
     cosLr: Annotated[
         bool | None,
         _camel_or_snake_field(
