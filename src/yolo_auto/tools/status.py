@@ -4,6 +4,7 @@ import base64
 import csv
 import logging
 import os
+import shlex
 import time
 from io import BytesIO, StringIO
 from typing import Any, Literal
@@ -672,8 +673,18 @@ def get_status(
 
     effective_run_id = record.run_id or run_id
     mlflow_url = tracker.get_run_url(effective_run_id)
-    metrics_path = record.paths.get("metricsPath", "")
-    content, stderr_text, exit_code = ssh_client.execute(f"cat {metrics_path}")
+    metrics_path = (record.paths.get("metricsPath") or "").strip()
+    if not metrics_path:
+        return err(
+            error_code="INVALID_JOB_RECORD",
+            message="job record missing metricsPath",
+            retryable=False,
+            hint="状态文件中的任务路径不完整，请重新 start_training 或修复 YOLO_STATE_FILE",
+            payload={"jobId": job_id},
+        )
+    content, stderr_text, exit_code = ssh_client.execute(
+        f"cat {shlex.quote(metrics_path)}"
+    )
     if exit_code != 0:
         if ssh_client.process_alive(record.pid):
             return ok(
@@ -685,8 +696,11 @@ def get_status(
                     "error": stderr_text.strip() or "results.csv not ready",
                 }
             )
-        log_path = record.paths.get("logPath", "")
-        log_content, _, _ = ssh_client.tail_file(log_path, lines=80)
+        log_path = (record.paths.get("logPath") or "").strip()
+        if log_path:
+            log_content, _, _ = ssh_client.tail_file(log_path, lines=80)
+        else:
+            log_content = ""
         failed = "error" in log_content.lower() or "traceback" in log_content.lower()
         target = JobStatus.FAILED if failed else JobStatus.COMPLETED
         updated = state_store.update_status(job_id, target, now)
