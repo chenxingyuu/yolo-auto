@@ -85,7 +85,8 @@ def test_start_training_success(
     mock_tracker.start_run.assert_called_once()
     call_kw = mock_tracker.start_run.call_args.kwargs
     assert call_kw["tags"]["yolo_job_id"] == "job-1"
-    assert call_kw["tags"]["yolo_data_stem"] == "dataset"
+    # dataset.yaml 在 /data 下时 dataset_scope_key 取父目录名 data
+    assert call_kw["tags"]["yolo_data_stem"] == "data"
     assert call_kw["tags"]["yolo_model_stem"] == "yolov8n"
     assert call_kw["tags"]["yolo_source"] == "yolo_auto.training"
     assert call_kw["config"]["env_id"] == "default"
@@ -98,6 +99,34 @@ def test_start_training_success(
     body = " ".join(str(e) for e in card["body"]["elements"])
     assert "job=" not in body and "runId" not in body
     assert "640" in body and "16" in body and "Epochs" in body
+
+
+def test_start_training_dataset_provenance_tags(
+    mock_ssh: MagicMock,
+    mock_notifier: MagicMock,
+    mock_tracker: MagicMock,
+    state_store,
+) -> None:
+    mock_ssh.execute.return_value = ("", "", 0)
+    mock_ssh.execute_background.return_value = ("12345", 0)
+    req = replace(
+        _make_req("job-prov"),
+        minio_export_zip="task1-export.zip",
+        dataset_slug="myds",
+        dataset_version_note="v2 labels",
+    )
+    result = start_training(req, mock_ssh, mock_notifier, mock_tracker, state_store)
+    assert result["ok"] is True
+    tags = mock_tracker.start_run.call_args.kwargs["tags"]
+    assert tags["yolo_minio_export_zip"] == "task1-export.zip"
+    assert tags["yolo_dataset_slug"] == "myds"
+    assert tags["yolo_dataset_version_note"] == "v2 labels"
+    stored = state_store.get("job-prov")
+    assert stored and stored.dataset_provenance == {
+        "minioExportZip": "task1-export.zip",
+        "datasetSlug": "myds",
+        "datasetVersionNote": "v2 labels",
+    }
 
 
 def test_start_training_duplicate(

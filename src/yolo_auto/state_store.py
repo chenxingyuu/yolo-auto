@@ -61,6 +61,7 @@ class JobStateStore:
             train_epochs=record.train_epochs,
             train_params=record.train_params,
             last_reported_epoch=record.last_reported_epoch,
+            dataset_provenance=record.dataset_provenance,
         )
         self.upsert(updated)
         return updated
@@ -84,6 +85,7 @@ class JobStateStore:
             train_epochs=record.train_epochs,
             train_params=record.train_params,
             last_reported_epoch=record.last_reported_epoch,
+            dataset_provenance=record.dataset_provenance,
         )
         self.upsert(updated)
         return updated
@@ -107,6 +109,7 @@ class JobStateStore:
             train_epochs=record.train_epochs,
             train_params=record.train_params,
             last_reported_epoch=record.last_reported_epoch,
+            dataset_provenance=record.dataset_provenance,
         )
         self.upsert(updated)
         return updated
@@ -130,6 +133,7 @@ class JobStateStore:
             train_epochs=record.train_epochs,
             train_params=record.train_params,
             last_reported_epoch=epoch,
+            dataset_provenance=record.dataset_provenance,
         )
         self.upsert(updated)
         return updated
@@ -158,6 +162,7 @@ class JobStateStore:
             train_epochs=record.train_epochs,
             train_params=record.train_params,
             last_reported_epoch=record.last_reported_epoch,
+            dataset_provenance=record.dataset_provenance,
         )
         self.upsert(updated)
         return updated

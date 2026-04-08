@@ -90,6 +90,7 @@ cp .env.example .env
 | `FEISHU_REPORT_EVERY_N_EPOCHS` | 每 N 个 epoch 推一次（`0` 表示关闭里程碑，仅状态变化时推送） |
 | `FEISHU_CARD_IMG_KEY` / `FEISHU_CARD_FALLBACK_IMG_KEY` | 可选：训练 schema 2.0 卡片顶部图片与 fallback 图片 key |
 | `YOLO_PRIMARY_METRIC` | 主指标名，写入 MLflow 与里程碑文案，如 `map5095` |
+| `YOLO_VALIDATE_LOG_TO_MLFLOW` | `yolo_validate` 是否将 `val_*` 指标写回对应 MLflow run（默认 `true`） |
 | `MLFLOW_*` | 追踪后端与实验名（含可选模型注册：`MLFLOW_MODEL_REGISTRY_ENABLE`、`MLFLOW_MODEL_NAME_TEMPLATE`） |
 | `YOLO_WORK_DIR` / `YOLO_DATASETS_DIR` / `YOLO_JOBS_DIR` / `YOLO_MODELS_DIR` | 远程路径（工作区、数据集、输出、预训练权重） |
 | `YOLO_STATE_FILE` | 本地任务状态文件（默认 `.state/jobs.db`，兼容从旧 `.json` 自动迁移） |
@@ -162,12 +163,12 @@ print(f'tools={t} prompts={p} resources={r}')
 | `yolo_setup_env` | 检查远程环境、模型文件存在性与数据集 YAML（模型缺失时会在 `YOLO_MODELS_DIR` 同名查找；train/val 必填，test 可选，类目配置一致性） |
 | `yolo_check_dataset` | 全量检查数据集文件与标注合法性（缺图/缺标签/坏标签/类别越界），严格模式下任一错误即失败 |
 | `yolo_fix_dataset` | 自动修复数据集问题（默认 dry-run 预览，apply 才落盘并生成备份）；支持 YAML/split/可确定标签格式修复，并会把 `path: .` 归一化为 data.yaml 绝对目录 |
-| `yolo_sync_dataset` | 从 MinIO 同步导出的 zip 到训练容器并返回 `dataConfigPath` |
-| `yolo_start_training` | 启动训练（异步），写入状态 |
+| `yolo_sync_dataset` | 从 MinIO 同步导出的 zip 到训练容器；返回 `dataConfigPath` 与结构化 `provenance`（便于下一步填训练血缘） |
+| `yolo_start_training` | 启动训练（异步），写入状态；可选 `minioExportZip` / `datasetSlug` / `datasetVersionNote` 写入任务与 MLflow tags |
 | `yolo_get_status` | 拉取 `results.csv`、更新 MLflow、飞书里程碑/完成通知 |
 | `yolo_stop_training` | 停止训练 |
-| `yolo_validate` | 对已完成任务执行 `yolo detect val` |
-| `yolo_export` | 导出已完成任务模型（onnx/engine/coreml 等） |
+| `yolo_validate` | 对已完成任务执行 `yolo detect val`；默认将 `val_*` 指标写回该 run（受 `YOLO_VALIDATE_LOG_TO_MLFLOW` 与参数 `logToMlflow` 约束） |
+| `yolo_export` | 导出已完成任务模型（onnx/engine/coreml 等）；成功后写入远程 `export-manifest.json` 并在返回中带 `exportManifestPath` |
 | `yolo_auto_tune` | 串行调参；返回 `bestFromTrials`、`bestFromMlflow`、`disagreement` |
 | `yolo_list_jobs` | 列出最近任务（含 `epochHint`） |
 | `yolo_get_job` | 按 `jobId` 查看记录；`refresh=true` 时顺带调用 `get_status` |
@@ -178,6 +179,15 @@ print(f'tools={t} prompts={p} resources={r}')
 | `yolo_rollback_model` | 将 alias 回滚到指定历史版本 |
 
 在对话中可以自然语言描述，由模型按需调用上述工具。
+
+### 从 MinIO 同步到训练（数据血缘）
+
+1. 调用 `yolo_sync_dataset` 成功后，响应中除 `dataConfigPath` 外还有 **`provenance`**（含 `objectName`、`mcSourcePath`、`extractedDir`、`datasetName` 等）。
+2. 启动训练时在必填参数之外可选传入（与 MCP schema 一致，支持 snake_case）：
+   - **`minioExportZip`**：zip 文件名或路径片段，建议等于 `provenance.objectName`。
+   - **`datasetSlug`**：与同步时的 dataset 目录名一致（`provenance.datasetName`）。
+   - **`datasetVersionNote`**：标注批次、任务号等说明。
+3. 上述字段会写入本地任务 **`datasetProvenance`**，并打到 MLflow **`tags`**（如 `yolo_minio_export_zip`），便于按数据来源筛选 run。
 
 ## 4.1 MCP Prompts（提示模板）一览
 

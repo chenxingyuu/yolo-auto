@@ -19,7 +19,7 @@
 | 数据集质检 / 修复 | `yolo_check_dataset`、`yolo_fix_dataset`：针对 YOLO 风格 data.yaml + 图片/标签目录 |
 | 启动训练 | `yolo_start_training`：在远程 **异步** 拉起 `yolo detect train ...`，写入本地任务状态与 MLflow |
 | 状态与指标 | `yolo_get_status`：读远程 `results.csv`、更新 MLflow、触发飞书里程碑/终态卡片 |
-| 停止 / 验证 / 导出 | `yolo_stop_training`、`yolo_validate`、`yolo_export` |
+| 停止 / 验证 / 导出 | `yolo_stop_training`、`yolo_validate`（可将 `val_*` 写回 MLflow）、`yolo_export`（可写 `export-manifest.json`） |
 | 任务列表与详情 | `yolo_list_jobs`、`yolo_get_job`（可选 `refresh` 拉状态） |
 | 删除本地记录 | `yolo_delete_job`：**仅删除本地 SQLite 中的任务状态**，不删远程日志与权重 |
 
@@ -38,7 +38,7 @@
 
 ### 2.4 数据流水线（可选）
 
-- **MinIO**：`yolo_sync_dataset` 与 `yolo://minio/datasets` 等依赖远程已配置 `mc` 与 bucket。
+- **MinIO**：`yolo_sync_dataset` 与 `yolo://minio/datasets` 等依赖远程已配置 `mc` 与 bucket；同步成功响应中的 **`provenance`** 可与 `yolo_start_training` 的可选字段（`minioExportZip` / `datasetSlug` / `datasetVersionNote`）对齐，写入本地任务与 MLflow tags。
 
 ### 2.5 只读上下文（MCP Resources）
 
@@ -76,6 +76,7 @@
 
 - 均为 **可选集成**：环境变量不全时，对应工具或资源会失败或返回空结果，需自行补齐运维与网络连通性。
 - SSH 认证、跳板机、多环境 `YOLO_SSH_ENVS` 由部署方维护；本项目不做堡垒机逻辑。
+- 连接失败时，`yolo_get_status` 等路径会尽量返回 **`SSH_*` 风格 `errorCode`**（含 `retryable` / `hint`），而不是未分类的底层异常字符串。
 
 ### 3.7 平台
 

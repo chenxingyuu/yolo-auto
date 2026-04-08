@@ -43,6 +43,7 @@ def test_validate_success(
     """.strip()
     mock_ssh.execute.return_value = (stdout, "", 0)
 
+    mock_tracker = MagicMock()
     result = run_validation(
         job_id=job_id,
         state_store=state_store,
@@ -50,9 +51,21 @@ def test_validate_success(
         jobs_dir="/jobs",
         work_dir="/workspace",
         data_config_path=None,
+        mlflow_tracker=mock_tracker,
+        log_to_mlflow=True,
     )
 
     assert result["ok"] is True
+    mock_tracker.log_validation_metrics.assert_called_once_with(
+        "run-1",
+        {
+            "val_precision": 0.649,
+            "val_recall": 0.591,
+            "val_map50": 0.634,
+            "val_map5095": 0.451,
+        },
+    )
+    assert result.get("mlflowValidationLogged") is True
     assert result["metrics"]["precision"] == 0.649
     assert result["metrics"]["recall"] == 0.591
     assert result["metrics"]["map50"] == 0.634

@@ -66,6 +66,7 @@ def register_resources(
                     "mode": feishu_mode,
                 },
                 "primaryMetric": settings.primary_metric_key,
+                "validateLogToMlflow": settings.yolo_validate_log_to_mlflow,
                 "watchPollIntervalSeconds": settings.watch_poll_interval_seconds,
             },
             ensure_ascii=False,

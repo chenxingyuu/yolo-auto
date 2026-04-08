@@ -44,9 +44,10 @@ class JobRecord:
     last_metrics_at: int | None = None
     train_epochs: int | None = None
     last_reported_epoch: int = 0
+    dataset_provenance: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "jobId": self.job_id,
             "runId": self.run_id,
             "status": self.status.value,
@@ -64,11 +65,18 @@ class JobRecord:
             "trainEpochs": self.train_epochs,
             "lastReportedEpoch": self.last_reported_epoch,
         }
+        if self.dataset_provenance:
+            out["datasetProvenance"] = self.dataset_provenance
+        return out
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> JobRecord:
         last_notified = data.get("lastNotifiedState")
         train_epochs_raw = data.get("trainEpochs")
+        raw_prov = data.get("datasetProvenance")
+        provenance: dict[str, Any] | None = (
+            dict(raw_prov) if isinstance(raw_prov, dict) else None
+        )
         return JobRecord(
             job_id=str(data["jobId"]),
             run_id=str(data["runId"]),
@@ -88,5 +96,6 @@ class JobRecord:
             last_metrics_at=int(data["lastMetricsAt"]) if data.get("lastMetricsAt") else None,
             train_epochs=int(train_epochs_raw) if train_epochs_raw is not None else None,
             last_reported_epoch=int(data.get("lastReportedEpoch", 0)),
+            dataset_provenance=provenance,
         )
 

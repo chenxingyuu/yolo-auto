@@ -44,6 +44,26 @@ from yolo_auto.tracker import MLflowTracker, TrackerConfig
 logger = logging.getLogger(__name__)
 
 
+def _format_ok_status_line(result: dict[str, object]) -> str:
+    """将一次成功的 get_status 返回体整理成单行诊断信息（不含密钥）。"""
+    status = result.get("status", "?")
+    progress = result.get("progress", "?")
+    metrics = result.get("metrics")
+    if not isinstance(metrics, dict):
+        return f"status={status} progress={progress}"
+    epoch = metrics.get("epoch", "?")
+    parts = [
+        f"status={status}",
+        f"progress={progress}",
+        f"epoch={epoch}",
+    ]
+    for key in ("loss", "map5095", "map50", "primaryMetric"):
+        val = metrics.get(key)
+        if val is not None:
+            parts.append(f"{key}={val}")
+    return " ".join(parts)
+
+
 class LockFile:
     def __init__(self, path: Path) -> None:
         self._path = path
@@ -63,6 +83,7 @@ class LockFile:
         if self._handle is not None:
             fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
             self._handle.close()
+            logger.debug("released watch lock path=%s", self._path)
 
 
 def main() -> None:
@@ -82,6 +103,14 @@ def main() -> None:
                 key_path=ssh_env.key_path,
             )
         )
+        logger.info(
+            "ssh env registered env_id=%r host=%s port=%s user=%s key=%s",
+            env_id,
+            ssh_env.host,
+            ssh_env.port,
+            ssh_env.user,
+            ssh_env.key_path,
+        )
     ssh_default = ssh_by_env["default"]
     notifier = FeishuNotifier(
         webhook_url=settings.feishu_webhook_url,
@@ -100,13 +129,82 @@ def main() -> None:
     )
     store = JobStateStore(settings.yolo_state_file)
     lock_path = Path(settings.watch_lock_file)
+    logger.info(
+        "yolo-auto-watch starting state_file=%s lock_file=%s poll_interval_s=%s "
+        "feishu_report=%s every_n_epochs=%s primary_metric=%s mlflow_uri=%s experiment=%s",
+        settings.yolo_state_file,
+        settings.watch_lock_file,
+        settings.watch_poll_interval_seconds,
+        settings.feishu_report_enable,
+        settings.feishu_report_every_n_epochs,
+        settings.primary_metric_key,
+        settings.mlflow_tracking_uri,
+        settings.mlflow_experiment_name,
+    )
+    poll_seq = 0
     while True:
+        poll_seq += 1
+        logger.debug(
+            "poll #%s waiting for watch lock path=%s",
+            poll_seq,
+            lock_path,
+        )
         with LockFile(lock_path):
-            for job in store.list_all():
+            logger.debug("poll #%s acquired watch lock", poll_seq)
+            jobs = store.list_all()
+            running_jobs = [j for j in jobs if j.status == JobStatus.RUNNING]
+            by_status: dict[str, int] = {}
+            for j in jobs:
+                by_status[j.status.value] = by_status.get(j.status.value, 0) + 1
+            logger.debug(
+                "poll #%s store snapshot jobs=%s by_status=%s running_ids=%s",
+                poll_seq,
+                len(jobs),
+                by_status,
+                [j.job_id for j in running_jobs],
+            )
+            if not running_jobs:
+                logger.debug(
+                    "poll #%s no RUNNING jobs sleep_s=%s",
+                    poll_seq,
+                    settings.watch_poll_interval_seconds,
+                )
+            else:
+                logger.info(
+                    "poll #%s refreshing %s RUNNING job(s): %s",
+                    poll_seq,
+                    len(running_jobs),
+                    [(j.job_id, j.env_id or "default") for j in running_jobs],
+                )
+            for job in jobs:
                 if job.status != JobStatus.RUNNING:
                     continue
                 ssh_client = ssh_by_env.get(job.env_id, ssh_default)
+                ssh_label = job.env_id if job.env_id in ssh_by_env else "default"
+                if job.env_id and job.env_id not in ssh_by_env:
+                    logger.warning(
+                        "job_id=%s env_id=%r not in ssh map; using default SSH client",
+                        job.job_id,
+                        job.env_id,
+                    )
+                model_registry_name = tracker.build_model_name(
+                    env_id=job.env_id,
+                    data_key=dataset_scope_key(job.paths.get("dataConfigPath", "")),
+                    model_key=path_stem(job.paths.get("modelPath", "")),
+                )
+                logger.info(
+                    "get_status begin poll=#%s job_id=%s run_id=%s env_id=%r ssh=%s "
+                    "pid=%s metricsPath=%s",
+                    poll_seq,
+                    job.job_id,
+                    job.run_id,
+                    job.env_id,
+                    ssh_label,
+                    job.pid,
+                    (job.paths.get("metricsPath") or "").strip() or "(missing)",
+                )
                 try:
+                    t0 = time.monotonic()
                     result = get_status(
                         job.job_id,
                         job.run_id,
@@ -120,24 +218,42 @@ def main() -> None:
                         feishu_card_img_key=settings.feishu_card_img_key,
                         feishu_card_fallback_img_key=settings.feishu_card_fallback_img_key,
                         model_registry_enable=settings.mlflow_model_registry_enable,
-                        model_registry_name=tracker.build_model_name(
-                            env_id=job.env_id,
-                            data_key=dataset_scope_key(job.paths.get("dataConfigPath", "")),
-                            model_key=path_stem(job.paths.get("modelPath", "")),
-                        ),
+                        model_registry_name=model_registry_name,
                     )
+                    elapsed_ms = int((time.monotonic() - t0) * 1000)
                     if not bool(result.get("ok", True)):
                         logger.warning(
-                            "get_status failed for job_id=%s: errorCode=%s message=%s",
+                            "get_status failed poll=#%s job_id=%s elapsed_ms=%s "
+                            "errorCode=%s message=%s hint=%s retryable=%s",
+                            poll_seq,
                             job.job_id,
+                            elapsed_ms,
                             result.get("errorCode"),
                             result.get("error"),
+                            result.get("hint"),
+                            result.get("retryable"),
+                        )
+                    else:
+                        logger.info(
+                            "get_status ok poll=#%s job_id=%s elapsed_ms=%s %s",
+                            poll_seq,
+                            job.job_id,
+                            elapsed_ms,
+                            _format_ok_status_line(result),
                         )
                 except Exception:
                     logger.exception(
-                        "Unhandled error when polling status for job_id=%s",
+                        "get_status raised poll=#%s job_id=%s run_id=%s env_id=%r",
+                        poll_seq,
                         job.job_id,
+                        job.run_id,
+                        job.env_id,
                     )
+        logger.debug(
+            "poll #%s sleeping %ss",
+            poll_seq,
+            settings.watch_poll_interval_seconds,
+        )
         time.sleep(settings.watch_poll_interval_seconds)
 
 

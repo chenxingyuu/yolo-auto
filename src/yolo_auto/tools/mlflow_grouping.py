@@ -1,6 +1,27 @@
 from __future__ import annotations
 
 import os
+from typing import Any
+
+
+def mlflow_tags_for_dataset_provenance(
+    provenance: dict[str, Any] | None,
+) -> dict[str, str]:
+    """将 JobRecord.dataset_provenance 转为 MLflow tags（截断过长值）。"""
+    if not provenance:
+        return {}
+    tags: dict[str, str] = {}
+    max_len = 500
+    z = provenance.get("minioExportZip")
+    if z is not None and str(z).strip():
+        tags["yolo_minio_export_zip"] = str(z).strip()[:max_len]
+    slug = provenance.get("datasetSlug")
+    if slug is not None and str(slug).strip():
+        tags["yolo_dataset_slug"] = str(slug).strip()[:max_len]
+    note = provenance.get("datasetVersionNote")
+    if note is not None and str(note).strip():
+        tags["yolo_dataset_version_note"] = str(note).strip()[:max_len]
+    return tags
 
 
 def path_stem(path: str) -> str:

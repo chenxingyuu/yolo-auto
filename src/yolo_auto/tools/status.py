@@ -12,7 +12,7 @@ from typing import Any, Literal
 from yolo_auto.errors import err, ok
 from yolo_auto.feishu import FeishuNotifier
 from yolo_auto.models import JobStatus
-from yolo_auto.ssh_client import SSHClient
+from yolo_auto.ssh_client import SSHClient, SSHRemoteExecutionError
 from yolo_auto.state_store import JobStateStore
 from yolo_auto.tools.metrics_csv import metric_value_from_parsed, parse_training_row
 from yolo_auto.tracker import MLflowTracker
@@ -682,9 +682,18 @@ def get_status(
             hint="状态文件中的任务路径不完整，请重新 start_training 或修复 YOLO_STATE_FILE",
             payload={"jobId": job_id},
         )
-    content, stderr_text, exit_code = ssh_client.execute(
-        f"cat {shlex.quote(metrics_path)}"
-    )
+    try:
+        content, stderr_text, exit_code = ssh_client.execute(
+            f"cat {shlex.quote(metrics_path)}"
+        )
+    except SSHRemoteExecutionError as exc:
+        return err(
+            error_code=exc.error_code,
+            message=str(exc),
+            retryable=exc.retryable,
+            hint=exc.hint,
+            payload={"jobId": job_id, "runId": effective_run_id},
+        )
     if exit_code != 0:
         if ssh_client.process_alive(record.pid):
             return ok(
@@ -698,7 +707,10 @@ def get_status(
             )
         log_path = (record.paths.get("logPath") or "").strip()
         if log_path:
-            log_content, _, _ = ssh_client.tail_file(log_path, lines=80)
+            try:
+                log_content, _, _ = ssh_client.tail_file(log_path, lines=80)
+            except SSHRemoteExecutionError:
+                log_content = ""
         else:
             log_content = ""
         failed = "error" in log_content.lower() or "traceback" in log_content.lower()
@@ -777,7 +789,16 @@ def get_status(
         total_epochs=total_epochs,
         elapsed_seconds=elapsed_seconds,
     )
-    process_alive = ssh_client.process_alive(record.pid)
+    try:
+        process_alive = ssh_client.process_alive(record.pid)
+    except SSHRemoteExecutionError as exc:
+        return err(
+            error_code=exc.error_code,
+            message=str(exc),
+            retryable=exc.retryable,
+            hint=exc.hint,
+            payload={"jobId": job_id, "runId": effective_run_id},
+        )
 
     if process_alive and feishu_report_enable:
         milestone_n = feishu_report_every_n_epochs

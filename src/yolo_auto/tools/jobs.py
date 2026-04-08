@@ -149,6 +149,7 @@ def get_job(
                             last_metrics_at=refreshed.last_metrics_at,
                             train_epochs=refreshed.train_epochs,
                             last_reported_epoch=refreshed.last_reported_epoch,
+                            dataset_provenance=refreshed.dataset_provenance,
                         )
                         state_store.upsert(updated)
                         payload["record"] = updated.to_dict()

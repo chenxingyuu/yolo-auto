@@ -8,9 +8,12 @@ from typing import Any
 from yolo_auto.errors import err, ok
 from yolo_auto.feishu import FeishuNotifier
 from yolo_auto.models import JobRecord, JobStatus
-from yolo_auto.ssh_client import SSHClient
+from yolo_auto.ssh_client import SSHClient, SSHRemoteExecutionError
 from yolo_auto.state_store import JobStateStore
-from yolo_auto.tools.mlflow_grouping import build_training_group_tags
+from yolo_auto.tools.mlflow_grouping import (
+    build_training_group_tags,
+    mlflow_tags_for_dataset_provenance,
+)
 from yolo_auto.tools.status import (
     build_schema_card_with_mlflow_button,
     build_training_started_schema_card,
@@ -31,6 +34,9 @@ class TrainRequest:
     jobs_dir: str
     env_id: str = "default"
     extra_args: dict[str, Any] | None = None
+    minio_export_zip: str | None = None
+    dataset_slug: str | None = None
+    dataset_version_note: str | None = None
 
 
 def _resolve_remote_path(path: str, work_dir: str) -> str:
@@ -104,6 +110,20 @@ def _extra_params_line_for_start_card(extra_args: dict[str, Any] | None) -> str 
     return line
 
 
+def _dataset_provenance_from_request(req: TrainRequest) -> dict[str, Any] | None:
+    parts: dict[str, Any] = {}
+    z = (req.minio_export_zip or "").strip()
+    if z:
+        parts["minioExportZip"] = z
+    s = (req.dataset_slug or "").strip()
+    if s:
+        parts["datasetSlug"] = s
+    n = (req.dataset_version_note or "").strip()
+    if n:
+        parts["datasetVersionNote"] = n
+    return parts or None
+
+
 def _fourth_metric_for_start_card(extra_args: dict[str, Any] | None) -> tuple[str, str]:
     ex = extra_args or {}
     if ex.get("patience") is not None:
@@ -146,6 +166,8 @@ def start_training(
         model_path=req.model,
         data_config_path=req.data_config_path,
     )
+    ds_prov = _dataset_provenance_from_request(req)
+    group_tags.update(mlflow_tags_for_dataset_provenance(ds_prov))
     mlflow_cfg: dict[str, Any] = {
         "env_id": req.env_id,
         "model": req.model,
@@ -156,6 +178,9 @@ def start_training(
     }
     if req.learning_rate is not None:
         mlflow_cfg["learning_rate"] = req.learning_rate
+    if ds_prov:
+        for k, v in ds_prov.items():
+            mlflow_cfg[f"dataset_{k}"] = v
     mlflow_cfg.update(req.extra_args or {})
     run_id = tracker.start_run(
         job_id=req.job_id,
@@ -178,6 +203,14 @@ def start_training(
     )
     try:
         pid, _ = ssh_client.execute_background(train_cmd)
+    except SSHRemoteExecutionError as exc:
+        return err(
+            error_code=exc.error_code,
+            message=str(exc),
+            retryable=exc.retryable,
+            hint=exc.hint,
+            payload={"jobId": req.job_id},
+        )
     except Exception as exc:
         return err(
             error_code="START_FAILED",
@@ -207,6 +240,7 @@ def start_training(
         last_metrics_at=existing.last_metrics_at if existing else None,
         train_epochs=req.epochs,
         last_reported_epoch=0,
+        dataset_provenance=ds_prov,
     )
     state_store.upsert(record)
     mlflow_url = tracker.get_run_url(run_id)

@@ -31,6 +31,10 @@ def test_sync_dataset_success(mock_ssh: MagicMock) -> None:
     assert result["datasetName"] == "task8"
     assert result["extractedDir"] == "/workspace/datasets/task8"
     assert len(result["files"]) >= 1
+    prov = result["provenance"]
+    assert prov["objectName"] == "task8-20260327075925.zip"
+    assert prov["mcSourcePath"] == result["source"]
+    assert prov["dataYamlRelative"] == "nested/data.yaml"
 
 
 def test_sync_dataset_fail_when_object_missing(mock_ssh: MagicMock) -> None:

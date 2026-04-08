@@ -97,4 +97,8 @@ def test_export_success_onnx(mock_ssh: MagicMock, state_store) -> None:
     artifacts = result["artifacts"]
     assert any(a["format"] == "onnx" for a in artifacts)
     assert any(a["path"].endswith("/test.onnx") for a in artifacts)
+    assert result.get("exportManifestPath") == "/jobs/job-1/export-manifest.json"
+    mock_ssh.upload_bytes.assert_called_once()
+    raw = mock_ssh.upload_bytes.call_args[0][0]
+    assert b"export-manifest" in raw or b"job-1" in raw
 

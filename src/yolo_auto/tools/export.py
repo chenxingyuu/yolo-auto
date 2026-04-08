@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shlex
 import time
 from typing import TYPE_CHECKING, Any
@@ -235,14 +236,34 @@ def run_export(
             payload={"jobId": effective_job_id, "errors": export_errors},
         )
 
+    exported_at = int(time.time())
     out: dict[str, object] = {
         "jobId": effective_job_id,
         "modelPath": best_path,
         "artifacts": artifacts,
         "errors": export_errors,
-        "exportedAt": int(time.time()),
+        "exportedAt": exported_at,
     }
     if model_ref_meta:
         out["modelRef"] = model_ref_meta
+    manifest: dict[str, Any] = {
+        "schema": "yolo-auto.export-manifest/v1",
+        "jobId": effective_job_id,
+        "runId": record.run_id,
+        "exportedAt": exported_at,
+        "modelPath": best_path,
+        "formatsRequested": normalized_formats,
+        "artifacts": artifacts,
+        "errors": export_errors,
+    }
+    manifest_name = "export-manifest.json"
+    manifest_remote = f"{job_dir.rstrip('/')}/{manifest_name}"
+    try:
+        payload = json.dumps(manifest, ensure_ascii=True, indent=2).encode("utf-8")
+        ssh_client.upload_bytes(payload, manifest_remote)
+        out["exportManifestPath"] = manifest_remote
+        out["exportManifest"] = manifest
+    except Exception as exc:
+        out["exportManifestWarning"] = str(exc)
     return ok(out)
 

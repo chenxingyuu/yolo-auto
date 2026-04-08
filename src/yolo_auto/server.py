@@ -528,6 +528,38 @@ def yolo_start_training(
             description="可选任务 ID；不传则自动生成。用于日志目录与 stop 时匹配进程。",
         ),
     ] = None,
+    minioExportZip: Annotated[
+        str | None,
+        _camel_or_snake_field(
+            "minioExportZip",
+            "minio_export_zip",
+            default=None,
+            description=(
+                "可选。MinIO/CVAT 导出 zip 文件名或路径片段，写入任务血缘与 MLflow tags；"
+                "可与 yolo_sync_dataset 返回的 provenance.objectName 一致。"
+            ),
+        ),
+    ] = None,
+    datasetSlug: Annotated[
+        str | None,
+        _camel_or_snake_field(
+            "datasetSlug",
+            "dataset_slug",
+            default=None,
+            description=(
+                "可选。数据集目录短名（与 sync 时 datasetName 一致），用于血缘与 MLflow tags。"
+            ),
+        ),
+    ] = None,
+    datasetVersionNote: Annotated[
+        str | None,
+        _camel_or_snake_field(
+            "datasetVersionNote",
+            "dataset_version_note",
+            default=None,
+            description="可选。人工可读版本说明（如标注批次），写入血缘与 MLflow tag。",
+        ),
+    ] = None,
     extraArgs: Annotated[
         dict[str, Any] | None,
         _camel_or_snake_field(
@@ -606,6 +638,9 @@ def yolo_start_training(
             "time": trainTimeHours,
         },
     )
+    zip_p = (minioExportZip or "").strip() or None
+    slug_p = (datasetSlug or "").strip() or None
+    note_p = (datasetVersionNote or "").strip() or None
     req = TrainRequest(
         job_id=resolved_job_id,
         model=model_str,
@@ -618,6 +653,9 @@ def yolo_start_training(
         jobs_dir=SETTINGS.yolo_jobs_dir,
         env_id=envId,
         extra_args=merged_extras,
+        minio_export_zip=zip_p,
+        dataset_slug=slug_p,
+        dataset_version_note=note_p,
     )
     ssh_client = SSH_BY_ENV.get(envId, SSH)
     return start_training(
@@ -729,6 +767,18 @@ def yolo_validate(
         dict[str, Any] | None,
         Field(description="可选：透传 Ultralytics CLI 参数，转为 key=value 形式。"),
     ] = None,
+    logToMlflow: Annotated[
+        bool,
+        _camel_or_snake_field(
+            "logToMlflow",
+            "log_to_mlflow",
+            default=True,
+            description=(
+                "是否将验证指标写回该任务对应 MLflow run；"
+                "总开关见环境变量 YOLO_VALIDATE_LOG_TO_MLFLOW。"
+            ),
+        ),
+    ] = True,
 ) -> dict[str, Any]:
     """基于训练完成后的最佳权重在验证集上跑 yolo detect val。"""
     env_id = "default"
@@ -757,6 +807,8 @@ def yolo_validate(
         extra_args=extraArgs,
         model_ref=modelRef,
         registry_tracker=TRACKER if SETTINGS.mlflow_model_registry_enable else None,
+        mlflow_tracker=TRACKER,
+        log_to_mlflow=SETTINGS.yolo_validate_log_to_mlflow and logToMlflow,
     )
 
 

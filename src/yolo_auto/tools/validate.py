@@ -72,6 +72,8 @@ def run_validation(
     extra_args: dict[str, Any] | None = None,
     model_ref: str | None = None,
     registry_tracker: MLflowTracker | None = None,
+    mlflow_tracker: MLflowTracker | None = None,
+    log_to_mlflow: bool = True,
 ) -> dict[str, object]:
     model_ref_meta: dict[str, str] | None = None
     effective_job_id = (job_id or "").strip() or None
@@ -221,4 +223,17 @@ def run_validation(
     }
     if model_ref_meta:
         out["modelRef"] = model_ref_meta
+    if log_to_mlflow and mlflow_tracker is not None and record.run_id.strip():
+        val_metrics = {
+            "val_precision": metrics["precision"],
+            "val_recall": metrics["recall"],
+            "val_map50": metrics["map50"],
+            "val_map5095": metrics["map5095"],
+        }
+        try:
+            mlflow_tracker.log_validation_metrics(record.run_id, val_metrics)
+            out["mlflowValidationLogged"] = True
+        except Exception as exc:
+            out["mlflowValidationLogged"] = False
+            out["mlflowLogWarning"] = str(exc)
     return ok(out)

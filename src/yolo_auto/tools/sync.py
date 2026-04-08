@@ -129,6 +129,17 @@ def sync_dataset(
         )
 
     data_config_path = _normalize_join(extracted_dir, data_yaml_rel)
+    provenance: dict[str, Any] = {
+        "minioAlias": minio_alias.strip("/"),
+        "minioBucket": minio_bucket.strip("/"),
+        "minioPrefix": minio_prefix.strip("/"),
+        "objectName": safe_filename,
+        "mcSourcePath": remote_source,
+        "extractedDir": extracted_dir,
+        "dataConfigPath": data_config_path,
+        "dataYamlRelative": data_yaml_rel.strip().lstrip("./"),
+        "datasetName": safe_dataset_name,
+    }
     list_files_cmd = (
         f"cd {shlex.quote(extracted_dir)} && "
         "find . -maxdepth 3 -type f | head -50"
@@ -148,6 +159,7 @@ def sync_dataset(
             "extractedDir": extracted_dir,
             "dataConfigPath": data_config_path,
             "files": files,
+            "provenance": provenance,
         }
     )
 

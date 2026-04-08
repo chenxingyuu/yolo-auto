@@ -36,6 +36,7 @@ class Settings:
     yolo_state_file: str
     watch_poll_interval_seconds: int
     watch_lock_file: str
+    yolo_validate_log_to_mlflow: bool
 
 
 @dataclass(frozen=True)
@@ -165,5 +166,8 @@ def load_settings() -> Settings:
             5, int(_get_env("YOLO_WATCH_POLL_INTERVAL_SECONDS", "30"))
         ),
         watch_lock_file=_get_env("YOLO_WATCH_LOCK_FILE", ".state/watch.lock"),
+        yolo_validate_log_to_mlflow=_env_truthy(
+            _get_env("YOLO_VALIDATE_LOG_TO_MLFLOW", "true")
+        ),
     )
 

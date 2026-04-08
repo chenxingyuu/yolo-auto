@@ -131,6 +131,16 @@ class MLflowTracker:
             mlflow.log_metrics(metrics, step=step)
         self._last_logged_step_by_run[run_id] = step
 
+    def log_validation_metrics(self, run_id: str, metrics: dict[str, float]) -> None:
+        """在训练 run 上记录独立验证指标（固定 step，避免与 epoch 曲线混淆）。"""
+        step = 999_999
+        active = mlflow.active_run()
+        if active is not None and active.info.run_id == run_id:
+            mlflow.log_metrics(metrics, step=step)
+            return
+        with mlflow.start_run(run_id=run_id, nested=True):
+            mlflow.log_metrics(metrics, step=step)
+
     def finish_run(self, run_id: str, best_model_path: str | None = None) -> None:
         active = mlflow.active_run()
         if active is not None and active.info.run_id == run_id:
