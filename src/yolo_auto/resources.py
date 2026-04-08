@@ -56,6 +56,8 @@ def register_resources(
                     "experimentName": settings.mlflow_experiment_name,
                     "externalUrl": settings.mlflow_external_url,
                     "leaderboardFilter": settings.mlflow_leaderboard_filter,
+                    "modelRegistryEnable": settings.mlflow_model_registry_enable,
+                    "modelNameTemplate": settings.mlflow_model_name_template,
                 },
                 "feishu": {
                     "reportEnable": settings.feishu_report_enable,
@@ -126,6 +128,46 @@ def register_resources(
                 "filter": settings.mlflow_leaderboard_filter,
                 "topRuns": top_runs,
                 "count": len(top_runs),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    @mcp.resource(
+        "yolo://models/registry",
+        name="registered-models",
+        description="MLflow Model Registry 摘要（模型名、aliases、最新版本与 run）。",
+        mime_type="application/json",
+    )
+    def resource_registered_models() -> str:
+        models = tracker.list_registered_models(max_results=50)
+        enriched: list[dict[str, Any]] = []
+        for m in models[:25]:
+            name = str(m.get("name", ""))
+            if not name:
+                continue
+            try:
+                versions = tracker.list_model_versions(model_name=name, max_results=5)
+            except Exception:
+                versions = []
+            latest = versions[0] if versions else None
+            aliases = m.get("aliases") or {}
+            enriched.append(
+                {
+                    **m,
+                    "primaryMetricKey": settings.primary_metric_key,
+                    "latestVersionDetail": latest,
+                    "aliasApproved": aliases.get("approved"),
+                    "aliasCandidate": aliases.get("candidate"),
+                }
+            )
+        return json.dumps(
+            {
+                "enabled": settings.mlflow_model_registry_enable,
+                "modelNameTemplate": settings.mlflow_model_name_template,
+                "primaryMetricKey": settings.primary_metric_key,
+                "models": enriched,
+                "count": len(enriched),
             },
             ensure_ascii=False,
             indent=2,

@@ -37,6 +37,7 @@ from yolo_auto.feishu import FeishuNotifier
 from yolo_auto.models import JobStatus
 from yolo_auto.ssh_client import SSHClient, SSHConfig
 from yolo_auto.state_store import JobStateStore
+from yolo_auto.tools.mlflow_grouping import dataset_scope_key, path_stem
 from yolo_auto.tools.status import get_status
 from yolo_auto.tracker import MLflowTracker, TrackerConfig
 
@@ -93,6 +94,8 @@ def main() -> None:
             tracking_uri=settings.mlflow_tracking_uri,
             experiment_name=settings.mlflow_experiment_name,
             external_url=settings.mlflow_external_url,
+            model_registry_enable=settings.mlflow_model_registry_enable,
+            model_name_template=settings.mlflow_model_name_template,
         )
     )
     store = JobStateStore(settings.yolo_state_file)
@@ -116,6 +119,12 @@ def main() -> None:
                         primary_metric_key=settings.primary_metric_key,
                         feishu_card_img_key=settings.feishu_card_img_key,
                         feishu_card_fallback_img_key=settings.feishu_card_fallback_img_key,
+                        model_registry_enable=settings.mlflow_model_registry_enable,
+                        model_registry_name=tracker.build_model_name(
+                            env_id=job.env_id,
+                            data_key=dataset_scope_key(job.paths.get("dataConfigPath", "")),
+                            model_key=path_stem(job.paths.get("modelPath", "")),
+                        ),
                     )
                     if not bool(result.get("ok", True)):
                         logger.warning(

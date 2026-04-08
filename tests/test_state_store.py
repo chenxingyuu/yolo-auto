@@ -28,6 +28,10 @@ def test_state_store_crud_and_ordering(tmp_path: Path) -> None:
     all_jobs = store.list_all()
     assert [item.job_id for item in all_jobs] == ["job-2", "job-1"]
 
+    assert store.find_by_run_id("run-job-1") is not None
+    assert store.find_by_run_id("run-job-1").job_id == "job-1"
+    assert store.find_by_run_id("missing") is None
+
     assert store.delete("job-1") is True
     assert store.delete("job-1") is False
     assert store.get("job-1") is None

@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import re
 import shlex
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from yolo_auto.errors import err, ok
 from yolo_auto.models import JobStatus
 from yolo_auto.ssh_client import SSHClient
 from yolo_auto.state_store import JobStateStore
+from yolo_auto.tools.model_ref import parse_model_ref, resolve_model_ref_to_record
+
+if TYPE_CHECKING:
+    from yolo_auto.tracker import MLflowTracker
 
 _ALL_LINE_RE = re.compile(
     r"^\s*all\s+\d+\s+\d+\s+([0-9]*\.?[0-9]+)\s+([0-9]*\.?[0-9]+)\s+([0-9]*\.?[0-9]+)\s+([0-9]*\.?[0-9]+)\s*$",
@@ -55,7 +59,7 @@ def _parse_val_stdout(stdout: str) -> dict[str, float] | None:
 
 
 def run_validation(
-    job_id: str,
+    job_id: str | None,
     state_store: JobStateStore,
     ssh_client: SSHClient,
     jobs_dir: str,
@@ -66,21 +70,75 @@ def run_validation(
     batch: int | None = None,
     device: str | None = None,
     extra_args: dict[str, Any] | None = None,
+    model_ref: str | None = None,
+    registry_tracker: MLflowTracker | None = None,
 ) -> dict[str, object]:
-    record = state_store.get(job_id)
+    model_ref_meta: dict[str, str] | None = None
+    effective_job_id = (job_id or "").strip() or None
+    raw_ref = (model_ref or "").strip()
+
+    if raw_ref:
+        if registry_tracker is None:
+            return err(
+                error_code="MODEL_REF_UNSUPPORTED",
+                message="modelRef 需要启用模型注册并传入 tracker",
+                retryable=False,
+                hint="设置 MLFLOW_MODEL_REGISTRY_ENABLE=true",
+                payload={},
+            )
+        parsed = parse_model_ref(raw_ref)
+        if not parsed:
+            return err(
+                error_code="INVALID_MODEL_REF",
+                message=f"无法解析 modelRef: {raw_ref}",
+                retryable=False,
+                hint="示例：`yolo-default-coco-yolo11n:approved` 或 `registry:name:alias`",
+                payload={"modelRef": raw_ref},
+            )
+        name, alias = parsed
+        resolved = resolve_model_ref_to_record(
+            registry_tracker,
+            state_store,
+            model_name=name,
+            alias=alias,
+        )
+        if not resolved:
+            return err(
+                error_code="MODEL_REF_UNRESOLVED",
+                message="registry alias 无法解析到本地 job（需同机状态库中仍有对应 runId）",
+                retryable=False,
+                hint="请改用 jobId，或确认该版本训练任务仍在 YOLO_STATE_FILE 中",
+                payload={"modelRef": raw_ref, "modelName": name, "alias": alias},
+            )
+        effective_job_id = resolved.job_id
+        model_ref_meta = {
+            "modelName": name,
+            "alias": alias,
+            "resolvedJobId": effective_job_id,
+        }
+    elif not effective_job_id:
+        return err(
+            error_code="MISSING_JOB_OR_MODEL_REF",
+            message="jobId 与 modelRef 至少填一个",
+            retryable=False,
+            hint='示例 modelRef：`yolo-default-coco-yolo11n:approved`',
+            payload={},
+        )
+
+    record = state_store.get(effective_job_id)
     if not record:
         return err(
             error_code="JOB_NOT_FOUND",
-            message=f"job not found: {job_id}",
+            message=f"job not found: {effective_job_id}",
             retryable=False,
             hint="请先启动训练或检查 jobId",
-            payload={"jobId": job_id},
+            payload={"jobId": effective_job_id},
         )
 
     if record.status != JobStatus.COMPLETED:
         return err(
             error_code="JOB_NOT_COMPLETED",
-            message=f"job not completed: {job_id}",
+            message=f"job not completed: {effective_job_id}",
             retryable=False,
             hint="请先等待训练完成后再调用 yolo_validate",
             payload=record.to_dict(),
@@ -102,7 +160,7 @@ def run_validation(
             message="best model file not found on remote host",
             retryable=False,
             hint="请确认远程权重路径可访问，并且权限允许读取",
-            payload={"jobId": job_id, "modelPath": best_path},
+            payload={"jobId": effective_job_id, "modelPath": best_path},
         )
 
     effective_data_config = data_config_path or record.paths.get("dataConfigPath", "")
@@ -112,7 +170,7 @@ def run_validation(
             message="dataConfigPath missing for validation",
             retryable=False,
             hint="请传入 dataConfigPath 参数，或在训练后确保 job record 中写入 dataConfigPath",
-            payload={"jobId": job_id},
+            payload={"jobId": effective_job_id},
         )
 
     extra_cli_args = _build_extra_cli_args(extra_args)
@@ -123,7 +181,7 @@ def run_validation(
         f"model={shlex.quote(best_path)}",
         f"data={shlex.quote(effective_data_config)}",
         f"project={shlex.quote(jobs_dir)}",
-        f"name={shlex.quote(f'val-{job_id}')}",
+        f"name={shlex.quote(f'val-{effective_job_id}')}",
     ]
     if img_size is not None:
         cmd.append(f"imgsz={img_size}")
@@ -142,7 +200,7 @@ def run_validation(
             message=stderr_text.strip() or stdout_text.strip() or "yolo val failed",
             retryable=False,
             hint="检查远程路径、数据集 YAML 与权重文件是否可用",
-            payload={"jobId": job_id},
+            payload={"jobId": effective_job_id},
         )
 
     metrics = _parse_val_stdout(stdout_text)
@@ -152,15 +210,15 @@ def run_validation(
             message="unable to parse yolo val stdout",
             retryable=False,
             hint="检查远程输出格式是否与 Ultralytics 版本一致（all 行可能不同）",
-            payload={"jobId": job_id},
+            payload={"jobId": effective_job_id},
         )
 
-    return ok(
-        {
-            "jobId": job_id,
-            "modelPath": best_path,
-            "metrics": metrics,
-            "rawOutput": stdout_text,
-        }
-    )
-
+    out: dict[str, object] = {
+        "jobId": effective_job_id,
+        "modelPath": best_path,
+        "metrics": metrics,
+        "rawOutput": stdout_text,
+    }
+    if model_ref_meta:
+        out["modelRef"] = model_ref_meta
+    return ok(out)

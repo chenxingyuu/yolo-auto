@@ -27,6 +27,8 @@ class Settings:
     mlflow_experiment_name: str
     mlflow_external_url: str | None
     mlflow_leaderboard_filter: str | None
+    mlflow_model_registry_enable: bool
+    mlflow_model_name_template: str
     yolo_work_dir: str
     yolo_datasets_dir: str
     yolo_jobs_dir: str
@@ -147,6 +149,13 @@ def load_settings() -> Settings:
         mlflow_experiment_name=_get_env("MLFLOW_EXPERIMENT_NAME", "yolo-auto"),
         mlflow_external_url=_get_env_optional("MLFLOW_EXTERNAL_URL"),
         mlflow_leaderboard_filter=_get_env_optional("MLFLOW_LEADERBOARD_FILTER"),
+        mlflow_model_registry_enable=_env_truthy(
+            _get_env("MLFLOW_MODEL_REGISTRY_ENABLE", "false")
+        ),
+        mlflow_model_name_template=_get_env(
+            "MLFLOW_MODEL_NAME_TEMPLATE",
+            "yolo-{env}-{data}",
+        ),
         yolo_work_dir=_get_env("YOLO_WORK_DIR", "/workspace/yolo-auto"),
         yolo_datasets_dir=_get_env("YOLO_DATASETS_DIR", "/workspace/datasets"),
         yolo_jobs_dir=_get_env("YOLO_JOBS_DIR", "/workspace/jobs"),

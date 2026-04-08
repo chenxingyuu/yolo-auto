@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import shlex
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from yolo_auto.errors import err, ok
 from yolo_auto.models import JobStatus
 from yolo_auto.ssh_client import SSHClient
 from yolo_auto.state_store import JobStateStore
+from yolo_auto.tools.model_ref import parse_model_ref, resolve_model_ref_to_record
+
+if TYPE_CHECKING:
+    from yolo_auto.tracker import MLflowTracker
 
 
 def _format_yolo_value(value: Any) -> str:
@@ -68,7 +72,7 @@ def _find_export_artifacts(
 
 
 def run_export(
-    job_id: str,
+    job_id: str | None,
     state_store: JobStateStore,
     ssh_client: SSHClient,
     jobs_dir: str,
@@ -80,20 +84,74 @@ def run_export(
     int8: bool | None = None,
     device: str | None = None,
     extra_args: dict[str, Any] | None = None,
+    model_ref: str | None = None,
+    registry_tracker: MLflowTracker | None = None,
 ) -> dict[str, object]:
-    record = state_store.get(job_id)
+    model_ref_meta: dict[str, str] | None = None
+    effective_job_id = (job_id or "").strip() or None
+    raw_ref = (model_ref or "").strip()
+
+    if raw_ref:
+        if registry_tracker is None:
+            return err(
+                error_code="MODEL_REF_UNSUPPORTED",
+                message="modelRef 需要启用模型注册并传入 tracker",
+                retryable=False,
+                hint="设置 MLFLOW_MODEL_REGISTRY_ENABLE=true",
+                payload={},
+            )
+        parsed = parse_model_ref(raw_ref)
+        if not parsed:
+            return err(
+                error_code="INVALID_MODEL_REF",
+                message=f"无法解析 modelRef: {raw_ref}",
+                retryable=False,
+                hint="示例：`yolo-default-coco-yolo11n:approved`",
+                payload={"modelRef": raw_ref},
+            )
+        name, alias = parsed
+        resolved = resolve_model_ref_to_record(
+            registry_tracker,
+            state_store,
+            model_name=name,
+            alias=alias,
+        )
+        if not resolved:
+            return err(
+                error_code="MODEL_REF_UNRESOLVED",
+                message="registry alias 无法解析到本地 job",
+                retryable=False,
+                hint="请改用 jobId，或确认该版本训练任务仍在 YOLO_STATE_FILE 中",
+                payload={"modelRef": raw_ref, "modelName": name, "alias": alias},
+            )
+        effective_job_id = resolved.job_id
+        model_ref_meta = {
+            "modelName": name,
+            "alias": alias,
+            "resolvedJobId": effective_job_id,
+        }
+    elif not effective_job_id:
+        return err(
+            error_code="MISSING_JOB_OR_MODEL_REF",
+            message="jobId 与 modelRef 至少填一个",
+            retryable=False,
+            hint='示例 modelRef：`yolo-default-coco-yolo11n:approved`',
+            payload={},
+        )
+
+    record = state_store.get(effective_job_id)
     if not record:
         return err(
             error_code="JOB_NOT_FOUND",
-            message=f"job not found: {job_id}",
+            message=f"job not found: {effective_job_id}",
             retryable=False,
             hint="请先启动训练并等待完成",
-            payload={"jobId": job_id},
+            payload={"jobId": effective_job_id},
         )
     if record.status != JobStatus.COMPLETED:
         return err(
             error_code="JOB_NOT_COMPLETED",
-            message=f"job not completed: {job_id}",
+            message=f"job not completed: {effective_job_id}",
             retryable=False,
             hint="请先等待训练完成再调用 yolo_export",
             payload=record.to_dict(),
@@ -114,10 +172,10 @@ def run_export(
             message="best model file not found on remote host",
             retryable=False,
             hint="请确认远程权重路径可访问",
-            payload={"jobId": job_id, "modelPath": best_path},
+            payload={"jobId": effective_job_id, "modelPath": best_path},
         )
 
-    job_dir = record.paths.get("jobDir", f"{jobs_dir}/{job_id}")
+    job_dir = record.paths.get("jobDir", f"{jobs_dir}/{effective_job_id}")
 
     effective_formats = formats or ["onnx", "engine", "coreml"]
     # 降噪：格式名标准化
@@ -128,7 +186,10 @@ def run_export(
     export_errors: list[dict[str, Any]] = []
     # 为了尽量减少重复搜索，每次只找到当前 format 的 artefacts。
     for fmt in normalized_formats:
-        project_arg = f"project={shlex.quote(job_dir)} name={shlex.quote(f'export-{fmt}-{job_id}')}"
+        project_arg = (
+            f"project={shlex.quote(job_dir)} "
+            f"name={shlex.quote(f'export-{fmt}-{effective_job_id}')}"
+        )
         cmd_common = (
             f"cd {shlex.quote(work_dir)} && "
             f"yolo export model={shlex.quote(best_path)} format={shlex.quote(fmt)}"
@@ -171,16 +232,17 @@ def run_export(
             message="yolo export failed for all formats",
             retryable=False,
             hint="检查远程权重路径、Ultralytics exporter 可用性与显存/权限",
-            payload={"jobId": job_id, "errors": export_errors},
+            payload={"jobId": effective_job_id, "errors": export_errors},
         )
 
-    return ok(
-        {
-            "jobId": job_id,
-            "modelPath": best_path,
-            "artifacts": artifacts,
-            "errors": export_errors,
-            "exportedAt": int(time.time()),
-        }
-    )
+    out: dict[str, object] = {
+        "jobId": effective_job_id,
+        "modelPath": best_path,
+        "artifacts": artifacts,
+        "errors": export_errors,
+        "exportedAt": int(time.time()),
+    }
+    if model_ref_meta:
+        out["modelRef"] = model_ref_meta
+    return ok(out)
 

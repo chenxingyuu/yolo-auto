@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import csv
 import logging
+import os
 import time
 from io import BytesIO, StringIO
 from typing import Any, Literal
@@ -43,6 +44,30 @@ def _build_mlflow_button_elements(
             ],
         }
     ]
+
+
+def _build_url_button_element(
+    url: str,
+    *,
+    label: str,
+    element_id: str,
+) -> dict[str, Any]:
+    return {
+        "tag": "button",
+        "element_id": element_id,
+        "type": "primary_filled",
+        "size": "small",
+        "text": {"tag": "plain_text", "content": label},
+        "behaviors": [
+            {
+                "type": "open_url",
+                "default_url": url,
+                "pc_url": url,
+                "android_url": url,
+                "ios_url": url,
+            }
+        ],
+    }
 
 
 def _right_aligned_button_column_set(
@@ -191,6 +216,8 @@ def _build_training_schema_card(
     top_img_key: str | None = None,
     top_img_fallback_key: str | None = None,
     training_rows: list[dict[str, Any]] | None = None,
+    registry_markdown: str | None = None,
+    registry_button_specs: list[tuple[str, str, str]] | None = None,
 ) -> dict[str, Any]:
     elements: list[dict[str, Any]] = []
     if top_img_key:
@@ -240,8 +267,18 @@ def _build_training_schema_card(
             ],
         }
     )
+    if registry_markdown:
+        elements.append({"tag": "markdown", "content": registry_markdown})
     mlflow_buttons = _build_mlflow_button_elements(mlflow_url)
-    if mlflow_buttons:
+    extra_btns: list[dict[str, Any]] = []
+    if registry_button_specs:
+        for bid, label, url in registry_button_specs:
+            if url.strip():
+                extra_btns.append(
+                    _build_url_button_element(url.strip(), label=label, element_id=bid)
+                )
+    all_buttons = mlflow_buttons + extra_btns
+    if all_buttons:
         # 采用 bisect 双列：左列留空，按钮放右列，确保右侧对齐。
         # 这里使用 flex_mode=flow，尽量贴近飞书官方示例的兼容写法。
         elements.append(
@@ -262,7 +299,7 @@ def _build_training_schema_card(
                         "tag": "column",
                         "width": "auto",
                         "vertical_align": "top",
-                        "elements": mlflow_buttons,
+                        "elements": all_buttons,
                     }
                 ],
             }
@@ -619,6 +656,8 @@ def get_status(
     primary_metric_key: str = "map5095",
     feishu_card_img_key: str | None = None,
     feishu_card_fallback_img_key: str | None = None,
+    model_registry_enable: bool = False,
+    model_registry_name: str | None = None,
 ) -> dict[str, object]:
     now = int(time.time())
     record = state_store.get(job_id)
@@ -758,6 +797,43 @@ def get_status(
     if not process_alive:
         updated = state_store.update_status(job_id, JobStatus.COMPLETED, now)
         tracker.finish_run(effective_run_id, updated.paths.get("bestPath"))
+        registry_info: dict[str, Any] | None = None
+        if model_registry_enable and model_registry_name:
+            best_path = updated.paths.get("bestPath", "").strip()
+            artifact_name = os.path.basename(best_path) if best_path else "best.pt"
+            try:
+                registry_info = tracker.register_model_from_run(
+                    run_id=effective_run_id,
+                    model_name=model_registry_name,
+                    artifact_subpath=artifact_name or "best.pt",
+                    tags={"jobId": job_id},
+                    set_candidate_alias=True,
+                )
+            except Exception:
+                registry_info = {"ok": False, "error": "REGISTER_MODEL_FAILED"}
+        reg_md: str | None = None
+        reg_specs: list[tuple[str, str, str]] | None = None
+        if (
+            isinstance(registry_info, dict)
+            and registry_info.get("ok")
+            and model_registry_name
+        ):
+            vn = str(registry_info.get("version", ""))
+            reg_md = (
+                f"**模型注册** `{model_registry_name}` · v{vn}（candidate）\n"
+                f"设为推荐：在对话中调用 "
+                f"`yolo_promote_model_version`（modelName={model_registry_name!r}, "
+                f"version={vn!r}, alias=approved）"
+            )
+            reg_specs = []
+            u_model = tracker.get_registered_model_ui_url(model_registry_name)
+            if u_model:
+                reg_specs.append(("feishu_reg_model_btn", "打开模型注册", u_model))
+            u_ver = tracker.get_model_version_ui_url(model_registry_name, vn)
+            if u_ver:
+                reg_specs.append(("feishu_reg_ver_btn", "查看该版本", u_ver))
+            if not reg_specs:
+                reg_specs = None
         card = _build_training_schema_card(
             title="YOLO模型训练完成",
             header_template="green",
@@ -769,6 +845,8 @@ def get_status(
             top_img_key=feishu_card_img_key,
             top_img_fallback_key=feishu_card_fallback_img_key,
             training_rows=rows,
+            registry_markdown=reg_md,
+            registry_button_specs=reg_specs,
         )
         updated = _upsert_training_card(
             record=updated,
@@ -802,5 +880,6 @@ def get_status(
                 "best": record.paths.get("bestPath", ""),
                 "last": record.paths.get("lastPath", ""),
             },
+            "modelRegistry": registry_info if not process_alive else None,
         }
     )

@@ -168,6 +168,14 @@ class JobStateStore:
         ).fetchall()
         return [JobRecord.from_dict(json.loads(str(row["payload_json"]))) for row in rows]
 
+    def find_by_run_id(self, run_id: str) -> JobRecord | None:
+        if not run_id.strip():
+            return None
+        for record in self.list_all():
+            if record.run_id == run_id:
+                return record
+        return None
+
     def delete(self, job_id: str) -> bool:
         with self._conn:
             cur = self._conn.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))

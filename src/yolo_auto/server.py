@@ -20,6 +20,8 @@ from yolo_auto.tools.dataset_fix import fix_dataset
 from yolo_auto.tools.export import run_export
 from yolo_auto.tools.job_naming import resolve_job_id
 from yolo_auto.tools.jobs import delete_job, get_job, list_jobs
+from yolo_auto.tools.mlflow_grouping import dataset_scope_key, path_stem
+from yolo_auto.tools.model_ref import parse_model_ref, resolve_model_ref_to_record
 from yolo_auto.tools.setup_env import setup_env
 from yolo_auto.tools.status import get_status
 from yolo_auto.tools.sync import sync_dataset
@@ -97,6 +99,8 @@ TRACKER = MLflowTracker(
         tracking_uri=SETTINGS.mlflow_tracking_uri,
         experiment_name=SETTINGS.mlflow_experiment_name,
         external_url=SETTINGS.mlflow_external_url,
+        model_registry_enable=SETTINGS.mlflow_model_registry_enable,
+        model_name_template=SETTINGS.mlflow_model_name_template,
     )
 )
 STATE_STORE = JobStateStore(SETTINGS.yolo_state_file)
@@ -111,6 +115,19 @@ def _merge_training_cli_extras(
         if value is not None:
             merged[key] = value
     return merged
+
+
+def _registry_model_name_for(
+    *,
+    env_id: str,
+    model_path: str,
+    data_config_path: str,
+) -> str:
+    return TRACKER.build_model_name(
+        env_id=env_id,
+        data_key=dataset_scope_key(data_config_path),
+        model_key=path_stem(model_path),
+    )
 
 
 @mcp.tool(name="yolo_setup_env")
@@ -640,6 +657,16 @@ def yolo_get_status(
         primary_metric_key=SETTINGS.primary_metric_key,
         feishu_card_img_key=SETTINGS.feishu_card_img_key,
         feishu_card_fallback_img_key=SETTINGS.feishu_card_fallback_img_key,
+        model_registry_enable=SETTINGS.mlflow_model_registry_enable,
+        model_registry_name=(
+            _registry_model_name_for(
+                env_id=record.env_id,
+                model_path=record.paths.get("modelPath", ""),
+                data_config_path=record.paths.get("dataConfigPath", ""),
+            )
+            if record
+            else None
+        ),
     )
 
 
@@ -662,7 +689,24 @@ def yolo_stop_training(
 
 @mcp.tool(name="yolo_validate")
 def yolo_validate(
-    jobId: Annotated[str, Field(description="要在验证集上运行验证的任务 ID。")],
+    jobId: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="训练任务 ID；与 modelRef 二选一（优先 modelRef）。",
+        ),
+    ] = None,
+    modelRef: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "可选：模型注册引用，格式 `modelName:alias`（如 `yolo-env-data-yolo11n:approved`）"
+                "或 `registry:modelName:alias`。需 MLFLOW_MODEL_REGISTRY_ENABLE=true，"
+                "且本地状态库仍能按 runId 关联到原 job。"
+            ),
+        ),
+    ] = None,
     dataConfigPath: Annotated[
         str | None,
         Field(
@@ -687,8 +731,19 @@ def yolo_validate(
     ] = None,
 ) -> dict[str, Any]:
     """基于训练完成后的最佳权重在验证集上跑 yolo detect val。"""
-    record = STATE_STORE.get(jobId)
-    ssh_client = SSH_BY_ENV.get(record.env_id, SSH) if record else SSH
+    env_id = "default"
+    if jobId and (record := STATE_STORE.get(jobId)):
+        env_id = record.env_id
+    elif modelRef and modelRef.strip():
+        parsed = parse_model_ref(modelRef.strip())
+        if parsed:
+            name, alias = parsed
+            resolved = resolve_model_ref_to_record(
+                TRACKER, STATE_STORE, model_name=name, alias=alias
+            )
+            if resolved:
+                env_id = resolved.env_id
+    ssh_client = SSH_BY_ENV.get(env_id, SSH)
     return run_validation(
         jobId,
         STATE_STORE,
@@ -700,12 +755,24 @@ def yolo_validate(
         batch=batch,
         device=device,
         extra_args=extraArgs,
+        model_ref=modelRef,
+        registry_tracker=TRACKER if SETTINGS.mlflow_model_registry_enable else None,
     )
 
 
 @mcp.tool(name="yolo_export")
 def yolo_export(
-    jobId: Annotated[str, Field(description="要导出的训练任务 ID。")],
+    jobId: Annotated[
+        str | None,
+        Field(default=None, description="训练任务 ID；与 modelRef 二选一。"),
+    ] = None,
+    modelRef: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="同 yolo_validate 的 modelRef（modelName:alias）。",
+        ),
+    ] = None,
     formats: Annotated[
         list[str] | None,
         Field(
@@ -735,8 +802,19 @@ def yolo_export(
     ] = None,
 ) -> dict[str, Any]:
     """对已完成训练的 best 权重做 yolo export，并返回 job_dir 下找到的导出产物列表。"""
-    record = STATE_STORE.get(jobId)
-    ssh_client = SSH_BY_ENV.get(record.env_id, SSH) if record else SSH
+    env_id = "default"
+    if jobId and (record := STATE_STORE.get(jobId)):
+        env_id = record.env_id
+    elif modelRef and modelRef.strip():
+        parsed = parse_model_ref(modelRef.strip())
+        if parsed:
+            name, alias = parsed
+            resolved = resolve_model_ref_to_record(
+                TRACKER, STATE_STORE, model_name=name, alias=alias
+            )
+            if resolved:
+                env_id = resolved.env_id
+    ssh_client = SSH_BY_ENV.get(env_id, SSH)
     return run_export(
         job_id=jobId,
         state_store=STATE_STORE,
@@ -749,6 +827,8 @@ def yolo_export(
         int8=int8,
         device=device,
         extra_args=extraArgs,
+        model_ref=modelRef,
+        registry_tracker=TRACKER if SETTINGS.mlflow_model_registry_enable else None,
     )
 
 
@@ -850,6 +930,7 @@ def yolo_get_job(
         primary_metric_key=SETTINGS.primary_metric_key,
         feishu_card_img_key=SETTINGS.feishu_card_img_key,
         feishu_card_fallback_img_key=SETTINGS.feishu_card_fallback_img_key,
+        model_registry_enable=SETTINGS.mlflow_model_registry_enable,
     )
 
 
@@ -862,6 +943,105 @@ def yolo_delete_job(
     若任务仍处于 queued/running，会拒绝删除以避免丢失运行态追踪信息。
     """
     return delete_job(jobId, STATE_STORE)
+
+
+@mcp.tool(name="yolo_register_model")
+def yolo_register_model(
+    jobId: Annotated[str, Field(description="训练任务 ID。")],
+    modelName: Annotated[
+        str | None,
+        Field(description="可选注册名；不传则按模板自动生成。"),
+    ] = None,
+    setApproved: Annotated[
+        bool,
+        Field(default=False, description="是否把该版本直接设为 approved。"),
+    ] = False,
+) -> dict[str, Any]:
+    """把指定任务的 run 产物注册到 MLflow Model Registry。"""
+    record = STATE_STORE.get(jobId)
+    if not record:
+        return err(
+            error_code="JOB_NOT_FOUND",
+            message=f"job not found: {jobId}",
+            retryable=False,
+            hint="请先调用 yolo_list_jobs 或确认 jobId。",
+            payload={"jobId": jobId},
+        )
+    if not SETTINGS.mlflow_model_registry_enable:
+        return err(
+            error_code="MODEL_REGISTRY_DISABLED",
+            message="model registry is disabled",
+            retryable=False,
+            hint="设置 MLFLOW_MODEL_REGISTRY_ENABLE=true 后重启服务。",
+            payload={},
+        )
+    best_path = record.paths.get("bestPath", "").strip()
+    artifact_name = os.path.basename(best_path) if best_path else "best.pt"
+    final_name = (modelName or "").strip() or _registry_model_name_for(
+        env_id=record.env_id,
+        model_path=record.paths.get("modelPath", ""),
+        data_config_path=record.paths.get("dataConfigPath", ""),
+    )
+    result = TRACKER.register_model_from_run(
+        run_id=record.run_id,
+        model_name=final_name,
+        artifact_subpath=artifact_name or "best.pt",
+        tags={"jobId": jobId, "envId": record.env_id},
+    )
+    if setApproved and result.get("ok"):
+        TRACKER.set_model_alias(
+            model_name=final_name,
+            version=str(result["version"]),
+            alias="approved",
+        )
+    return result
+
+
+@mcp.tool(name="yolo_promote_model_version")
+def yolo_promote_model_version(
+    modelName: Annotated[str, Field(description="注册模型名。")],
+    version: Annotated[str, Field(description="目标版本号。")],
+    alias: Annotated[
+        str,
+        Field(default="approved", description="要设置的别名，默认 approved。"),
+    ] = "approved",
+) -> dict[str, Any]:
+    """把某模型版本设为 alias（默认 approved）。"""
+    return TRACKER.set_model_alias(model_name=modelName, version=version, alias=alias)
+
+
+@mcp.tool(name="yolo_list_registered_models")
+def yolo_list_registered_models(
+    modelName: Annotated[
+        str | None,
+        Field(default=None, description="可选：仅查看单个模型的版本列表。"),
+    ] = None,
+    limit: Annotated[int, Field(default=20, ge=1, le=100, description="返回上限。")] = 20,
+) -> dict[str, Any]:
+    """查看模型注册表（模型摘要或指定模型的版本列表）。"""
+    if modelName and modelName.strip():
+        versions = TRACKER.list_model_versions(model_name=modelName.strip(), max_results=limit)
+        return {
+            "ok": True,
+            "modelName": modelName.strip(),
+            "versions": versions,
+            "count": len(versions),
+        }
+    models = TRACKER.list_registered_models(max_results=limit)
+    return {"ok": True, "models": models, "count": len(models)}
+
+
+@mcp.tool(name="yolo_rollback_model")
+def yolo_rollback_model(
+    modelName: Annotated[str, Field(description="注册模型名。")],
+    toVersion: Annotated[str, Field(description="回滚目标版本号。")],
+    alias: Annotated[
+        str,
+        Field(default="approved", description="要回滚的别名，默认 approved。"),
+    ] = "approved",
+) -> dict[str, Any]:
+    """把 alias 指回指定历史版本（回滚）。"""
+    return TRACKER.rollback_model(model_name=modelName, to_version=toVersion, alias=alias)
 
 
 register_resources(

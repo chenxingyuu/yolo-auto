@@ -3,10 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import mlflow
 import pandas as pd
+from mlflow import MlflowClient
 from mlflow.entities import Run
+from mlflow.exceptions import MlflowException
 
 
 def _mlflow_param_strings(config: dict[str, Any]) -> dict[str, str]:
@@ -23,6 +26,8 @@ class TrackerConfig:
     tracking_uri: str
     experiment_name: str
     external_url: str | None = None
+    model_registry_enable: bool = False
+    model_name_template: str = "yolo-{env}-{data}"
 
 
 class MLflowTracker:
@@ -31,8 +36,13 @@ class MLflowTracker:
         mlflow.set_experiment(config.experiment_name)
         self._experiment_name = config.experiment_name
         self._external_url = (config.external_url or "").strip() or None
+        self._model_registry_enable = bool(config.model_registry_enable)
+        self._model_name_template = (
+            (config.model_name_template or "").strip() or "yolo-{env}-{data}"
+        )
         self._experiment_id: str | None = None
         self._last_logged_step_by_run: dict[str, int] = {}
+        self._client = MlflowClient()
 
     def _get_experiment_id(self) -> str | None:
         if self._experiment_id is not None:
@@ -195,4 +205,161 @@ class MLflowTracker:
                 }
             )
         return result
+
+    def build_model_name(
+        self,
+        *,
+        env_id: str,
+        data_key: str,
+        model_key: str,
+    ) -> str:
+        return self._model_name_template.format(
+            env=(env_id.strip() or "default"),
+            data=(data_key.strip() or "dataset"),
+            model=(model_key.strip() or "model"),
+        )
+
+    def register_model_from_run(
+        self,
+        *,
+        run_id: str,
+        model_name: str,
+        artifact_subpath: str = "best.pt",
+        description: str | None = None,
+        tags: dict[str, str] | None = None,
+        set_candidate_alias: bool = True,
+    ) -> dict[str, Any]:
+        if not self._model_registry_enable:
+            return {"ok": False, "error": "MODEL_REGISTRY_DISABLED"}
+
+        model_uri = f"runs:/{run_id}/{artifact_subpath.lstrip('/')}"
+        try:
+            self._client.create_registered_model(model_name)
+        except Exception:
+            pass
+        try:
+            mv = self._client.create_model_version(
+                name=model_name,
+                source=model_uri,
+                run_id=run_id,
+            )
+        except MlflowException as exc:
+            return {"ok": False, "error": str(exc), "modelName": model_name, "modelUri": model_uri}
+        version = str(mv.version)
+        if description:
+            self._client.update_model_version(
+                name=model_name,
+                version=version,
+                description=description,
+            )
+        for key, val in (tags or {}).items():
+            text = str(val).strip()
+            if text:
+                self._client.set_model_version_tag(
+                    name=model_name,
+                    version=version,
+                    key=key,
+                    value=text,
+                )
+        if set_candidate_alias:
+            self.set_model_alias(model_name=model_name, version=version, alias="candidate")
+        return {
+            "ok": True,
+            "modelName": model_name,
+            "version": version,
+            "modelUri": model_uri,
+        }
+
+    def set_model_alias(self, *, model_name: str, version: str, alias: str) -> dict[str, Any]:
+        if not self._model_registry_enable:
+            return {"ok": False, "error": "MODEL_REGISTRY_DISABLED"}
+        self._client.set_registered_model_alias(
+            name=model_name,
+            alias=alias,
+            version=str(version),
+        )
+        return {"ok": True, "modelName": model_name, "version": str(version), "alias": alias}
+
+    def rollback_model(
+        self,
+        *,
+        model_name: str,
+        to_version: str,
+        alias: str = "approved",
+    ) -> dict[str, Any]:
+        return self.set_model_alias(model_name=model_name, version=to_version, alias=alias)
+
+    def get_model_version_by_alias(self, model_name: str, alias: str):
+        return self._client.get_model_version_by_alias(model_name, alias)
+
+    def get_registered_model_ui_url(self, model_name: str) -> str | None:
+        if not self._external_url:
+            return None
+        base = self._external_url.rstrip("/")
+        enc = quote(model_name, safe="")
+        return f"{base}/#/models/{enc}"
+
+    def get_model_version_ui_url(self, model_name: str, version: str) -> str | None:
+        if not self._external_url:
+            return None
+        base = self._external_url.rstrip("/")
+        enc = quote(model_name, safe="")
+        return f"{base}/#/models/{enc}/version/{version}"
+
+    def list_registered_models(self, *, max_results: int = 50) -> list[dict[str, Any]]:
+        if not self._model_registry_enable:
+            return []
+        models = self._client.search_registered_models(max_results=max_results)
+        out: list[dict[str, Any]] = []
+        for m in models:
+            latest = sorted(m.latest_versions or [], key=lambda x: int(x.version), reverse=True)
+            latest_v = latest[0] if latest else None
+            out.append(
+                {
+                    "name": m.name,
+                    "aliases": dict(m.aliases or {}),
+                    "description": m.description or "",
+                    "latestVersion": str(latest_v.version) if latest_v else None,
+                    "latestRunId": latest_v.run_id if latest_v else None,
+                }
+            )
+        return out
+
+    def list_model_versions(
+        self,
+        *,
+        model_name: str,
+        max_results: int = 50,
+    ) -> list[dict[str, Any]]:
+        if not self._model_registry_enable:
+            return []
+        escaped_name = model_name.replace("'", "''")
+        f = f"name = '{escaped_name}'"
+        versions = self._client.search_model_versions(
+            filter_string=f,
+            max_results=max_results,
+        )
+        ordered_versions = sorted(versions, key=lambda x: int(x.version), reverse=True)
+        out: list[dict[str, Any]] = []
+        for v in ordered_versions:
+            metric_val: float | None = None
+            try:
+                run = self._client.get_run(v.run_id)
+                metrics = run.data.metrics or {}
+                metric_val = float(metrics.get("map5095")) if "map5095" in metrics else None
+            except Exception:
+                metric_val = None
+            out.append(
+                {
+                    "name": v.name,
+                    "version": str(v.version),
+                    "runId": v.run_id,
+                    "source": v.source,
+                    "aliases": list(v.aliases or []),
+                    "tags": dict(v.tags or {}),
+                    "metricMap5095": metric_val,
+                    "createdAt": int(v.creation_timestamp or 0),
+                }
+            )
+        return out
 
