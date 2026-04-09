@@ -161,7 +161,7 @@ print(f'tools={t} prompts={p} resources={r}')
 | `yolo_start_training` | 启动训练（异步），写入状态；可选 `minioExportZip` / `datasetSlug` / `datasetVersionNote` 写入任务血缘 |
 | `yolo_get_status` | 拉取 `results.csv`、推送飞书里程碑/完成通知 |
 | `yolo_stop_training` | 停止训练 |
-| `yolo_validate` | 对已完成任务执行 `yolo detect val` |
+| `yolo_validate` | 对已完成任务执行 `yolo detect val`；默认继续在远程逐图 predict 并写出 `per_image_qc.jsonl`（返回 `qcArtifactPath` / `qcPreviewLines`）；`skipPerImageQc=true` 可仅保留聚合 metrics |
 | `yolo_export` | 导出已完成任务模型（onnx/engine/coreml 等）；成功后写入远程 `export-manifest.json` 并在返回中带 `exportManifestPath` |
 | `yolo_auto_tune` | 串行调参；返回 `bestFromTrials`，并附带 MLflow 只读对照（`bestFromMlflow` / `mlflowTopRuns` / `disagreement`） |
 | `yolo_list_jobs` | 列出最近任务（含 `epochHint`） |
@@ -169,6 +169,8 @@ print(f'tools={t} prompts={p} resources={r}')
 | `yolo_delete_job` | 删除本地任务状态记录（仅删状态，不删远程文件；运行中任务不可删） |
 
 在对话中可以自然语言描述，由模型按需调用上述工具。
+
+与 **cvat-mcp** 手工串联质检时：先 `yolo_validate` 查看逐图 QC 文件路径，再在 CVAT 上对相应帧调用 `cvat_create_issue`（详见 cvat-mcp README）。
 
 ### 从 MinIO 同步到训练（数据血缘）
 
