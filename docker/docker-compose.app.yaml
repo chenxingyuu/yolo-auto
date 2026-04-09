@@ -54,9 +54,9 @@ services:
     # 提供独立 MLflow Tracking/UI，供 Ultralytics 原生集成写入
     command:
       [
-        "uvx",
-        "--from",
-        "mlflow==3.11.1",
+        "uv",
+        "run",
+        "--no-sync",
         "mlflow",
         "server",
         "--backend-store-uri",
