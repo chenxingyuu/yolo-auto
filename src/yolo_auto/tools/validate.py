@@ -7,6 +7,7 @@ from typing import Any
 
 from yolo_auto.errors import err, ok
 from yolo_auto.models import JobStatus
+from yolo_auto.remote_control import HttpControlClient, RemoteControlError
 from yolo_auto.ssh_client import SSHClient
 from yolo_auto.state_store import JobStateStore
 
@@ -263,7 +264,7 @@ def _qc_preview_and_line_count(
 def run_validation(
     job_id: str,
     state_store: JobStateStore,
-    ssh_client: SSHClient,
+    ssh_client: SSHClient | None,
     jobs_dir: str,
     work_dir: str,
     *,
@@ -273,6 +274,7 @@ def run_validation(
     device: str | None = None,
     extra_args: dict[str, Any] | None = None,
     skip_per_image_qc: bool = False,
+    control_client: HttpControlClient | None = None,
 ) -> dict[str, object]:
     effective_job_id = (job_id or "").strip()
     if not effective_job_id:
@@ -313,7 +315,7 @@ def run_validation(
             payload=record.to_dict(),
         )
 
-    if not ssh_client.file_exists(best_path):
+    if control_client is None and (ssh_client is None or not ssh_client.file_exists(best_path)):
         return err(
             error_code="BEST_MODEL_NOT_FOUND",
             message="best model file not found on remote host",
@@ -329,6 +331,41 @@ def run_validation(
             message="dataConfigPath missing for validation",
             retryable=False,
             hint="请传入 dataConfigPath 参数，或在训练后确保 job record 中写入 dataConfigPath",
+            payload={"jobId": effective_job_id},
+        )
+
+    if control_client is not None:
+        try:
+            remote = control_client.run_validation(
+                {
+                    "jobId": effective_job_id,
+                    "bestPath": best_path,
+                    "dataPath": effective_data_config,
+                    "jobsDir": jobs_dir,
+                    "workDir": work_dir,
+                    "imgsz": img_size,
+                    "batch": batch,
+                    "device": device,
+                    "extraArgs": extra_args,
+                    "skipPerImageQc": skip_per_image_qc,
+                }
+            )
+        except RemoteControlError as exc:
+            return err(
+                error_code=exc.error_code,
+                message=str(exc),
+                retryable=exc.retryable,
+                hint=exc.hint,
+                payload={"jobId": effective_job_id, **exc.payload},
+            )
+        return ok(dict(remote))
+
+    if ssh_client is None:
+        return err(
+            error_code="REMOTE_CLIENT_MISSING",
+            message="ssh client is required when control client is disabled",
+            retryable=False,
+            hint="请检查 YOLO_REMOTE_MODE 配置",
             payload={"jobId": effective_job_id},
         )
 

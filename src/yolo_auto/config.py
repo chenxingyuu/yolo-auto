@@ -9,6 +9,10 @@ from dotenv import find_dotenv, load_dotenv
 
 @dataclass(frozen=True)
 class Settings:
+    yolo_remote_mode: str
+    yolo_control_base_url: str | None
+    yolo_control_bearer_token: str | None
+    yolo_control_timeout_seconds: int
     yolo_ssh_host: str
     yolo_ssh_port: int
     yolo_ssh_user: str
@@ -69,6 +73,13 @@ def load_settings() -> Settings:
     if dotenv_path:
         load_dotenv(dotenv_path=dotenv_path, override=False)
 
+    remote_mode = (os.getenv("YOLO_REMOTE_MODE", "ssh") or "ssh").strip().lower()
+    if remote_mode not in {"ssh", "http"}:
+        raise ValueError("YOLO_REMOTE_MODE must be 'ssh' or 'http'")
+    control_base_url = _get_env_optional("YOLO_CONTROL_BASE_URL")
+    control_bearer_token = _get_env_optional("YOLO_CONTROL_BEARER_TOKEN")
+    control_timeout_seconds = max(1, int(_get_env("YOLO_CONTROL_TIMEOUT_SECONDS", "30")))
+
     raw_envs = os.getenv("YOLO_SSH_ENVS", "").strip()
     if raw_envs:
         parsed = json.loads(raw_envs)
@@ -125,6 +136,10 @@ def load_settings() -> Settings:
             "or (FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_CHAT_ID)"
         )
     return Settings(
+        yolo_remote_mode=remote_mode,
+        yolo_control_base_url=control_base_url,
+        yolo_control_bearer_token=control_bearer_token,
+        yolo_control_timeout_seconds=control_timeout_seconds,
         yolo_ssh_host=default_env.host,
         yolo_ssh_port=default_env.port,
         yolo_ssh_user=default_env.user,

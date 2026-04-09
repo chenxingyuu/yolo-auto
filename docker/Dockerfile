@@ -35,6 +35,10 @@ models = [ \
     'yolo26n.pt','yolo26s.pt','yolo26m.pt','yolo26l.pt','yolo26x.pt', \
 ]; [(YOLO(m), print(f'OK: {m}')) for m in models]"
 
+# 将训练控制面代码放入训练工作区目录
+RUN mkdir -p /workspace/yolo-auto-control
+COPY src/yolo_auto/control_api.py /workspace/yolo-auto-control/control_api.py
+
 # SSH 配置：禁用密码登录，只允许公钥，允许 root 公钥登录
 RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config && \
     sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config && \
@@ -44,11 +48,11 @@ RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/s
     touch /root/.ssh/authorized_keys && \
     chmod 600 /root/.ssh/authorized_keys
 
-EXPOSE 2222
+EXPOSE 2222 18080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD bash -c 'echo > /dev/tcp/127.0.0.1/2222' || exit 1
+    CMD bash -c 'echo > /dev/tcp/127.0.0.1/2222 && echo > /dev/tcp/127.0.0.1/18080' || exit 1
 
 USER root
 
-CMD ["/usr/sbin/sshd", "-D", "-p", "2222"]
+CMD ["bash", "-lc", "uvicorn --app-dir /workspace/yolo-auto-control control_api:app --host 0.0.0.0 --port 18080 & exec /usr/sbin/sshd -D -p 2222"]

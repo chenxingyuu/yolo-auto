@@ -13,6 +13,7 @@ from yolo_auto.errors import err
 from yolo_auto.feishu import FeishuNotifier
 from yolo_auto.notifier_state_store import NotifierStateStore
 from yolo_auto.prompts import register_prompts
+from yolo_auto.remote_control import HttpControlClient, RemoteControlConfig
 from yolo_auto.resources import register_resources
 from yolo_auto.ssh_client import SSHClient, SSHConfig
 from yolo_auto.state_store import JobStateStore
@@ -89,6 +90,17 @@ for env_id, ssh_env in SETTINGS.yolo_ssh_envs.items():
         )
     )
 SSH = SSH_BY_ENV["default"]
+CONTROL_CLIENT: HttpControlClient | None = None
+if SETTINGS.yolo_remote_mode == "http":
+    if not SETTINGS.yolo_control_base_url:
+        raise ValueError("YOLO_CONTROL_BASE_URL is required when YOLO_REMOTE_MODE=http")
+    CONTROL_CLIENT = HttpControlClient(
+        RemoteControlConfig(
+            base_url=SETTINGS.yolo_control_base_url,
+            bearer_token=SETTINGS.yolo_control_bearer_token,
+            timeout_seconds=SETTINGS.yolo_control_timeout_seconds,
+        )
+    )
 NOTIFIER = FeishuNotifier(
     webhook_url=SETTINGS.feishu_webhook_url,
     app_id=SETTINGS.feishu_app_id,
@@ -656,6 +668,7 @@ def yolo_start_training(
         mlflow_url=TRACKER.get_experiment_url(),
         feishu_card_img_key=SETTINGS.feishu_card_img_key,
         feishu_card_fallback_img_key=SETTINGS.feishu_card_fallback_img_key,
+        control_client=CONTROL_CLIENT,
     )
 
 
@@ -687,6 +700,7 @@ def yolo_get_status(
         primary_metric_key=SETTINGS.primary_metric_key,
         feishu_card_img_key=SETTINGS.feishu_card_img_key,
         feishu_card_fallback_img_key=SETTINGS.feishu_card_fallback_img_key,
+        control_client=CONTROL_CLIENT,
     )
 
 
@@ -712,6 +726,7 @@ def yolo_stop_training(
         STATE_STORE,
         notifier_store=NOTIFY_STORE,
         mlflow_url=TRACKER.get_experiment_url(),
+        control_client=CONTROL_CLIENT,
     )
 
 
@@ -773,6 +788,7 @@ def yolo_validate(
         device=device,
         extra_args=extraArgs,
         skip_per_image_qc=skipPerImageQc,
+        control_client=CONTROL_CLIENT,
     )
 
 
@@ -895,7 +911,13 @@ def yolo_list_jobs(
 
     用于在对话中快速查看有哪些 jobId 可继续 get_status 或 stop。
     """
-    return list_jobs(STATE_STORE, SSH_BY_ENV, TRACKER, limit=limit)
+    return list_jobs(
+        STATE_STORE,
+        SSH_BY_ENV,
+        TRACKER,
+        limit=limit,
+        control_client=CONTROL_CLIENT,
+    )
 
 
 @mcp.tool(name="yolo_get_job")
@@ -929,6 +951,7 @@ def yolo_get_job(
         primary_metric_key=SETTINGS.primary_metric_key,
         feishu_card_img_key=SETTINGS.feishu_card_img_key,
         feishu_card_fallback_img_key=SETTINGS.feishu_card_fallback_img_key,
+        control_client=CONTROL_CLIENT,
     )
 
 

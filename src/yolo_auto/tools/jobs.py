@@ -11,12 +11,13 @@ import yaml
 from yolo_auto.errors import err, ok
 from yolo_auto.feishu import FeishuNotifier
 from yolo_auto.models import JobRecord, JobStatus
+from yolo_auto.notifier_state_store import NotifierStateStore
+from yolo_auto.remote_control import HttpControlClient
 from yolo_auto.ssh_client import SSHClient
 from yolo_auto.state_store import JobStateStore
-from yolo_auto.tracker import MLflowTracker
-from yolo_auto.notifier_state_store import NotifierStateStore
 from yolo_auto.tools.metrics_csv import parse_training_row
 from yolo_auto.tools.status import get_status
+from yolo_auto.tracker import MLflowTracker
 
 
 def _job_status_from_mlflow(run_status: str) -> JobStatus:
@@ -57,6 +58,8 @@ def _epoch_hint(record: JobRecord, ssh_clients_by_env: dict[str, SSHClient]) -> 
     path = record.paths.get("metricsPath", "")
     if not path:
         return {}
+    if not ssh_clients_by_env or "default" not in ssh_clients_by_env:
+        return {}
     ssh_client = _ssh_for_record(record, ssh_clients_by_env)
     try:
         content, _, code = ssh_client.execute(f"cat {path}")
@@ -74,9 +77,10 @@ def _epoch_hint(record: JobRecord, ssh_clients_by_env: dict[str, SSHClient]) -> 
 
 def list_jobs(
     state_store: JobStateStore,
-    ssh_clients_by_env: dict[str, SSHClient],
+    ssh_clients_by_env: dict[str, SSHClient] | None,
     tracker: MLflowTracker | None = None,
     limit: int = 20,
+    control_client: HttpControlClient | None = None,
 ) -> dict[str, Any]:
     capped = max(1, min(limit, 100))
     if tracker is not None:
@@ -104,10 +108,17 @@ def list_jobs(
             )
         return ok({"jobs": items, "count": len(items)})
 
+    if control_client is not None:
+        try:
+            remote = control_client.list_jobs(limit=capped)
+            if isinstance(remote, dict) and isinstance(remote.get("jobs"), list):
+                return ok({"jobs": remote["jobs"], "count": int(remote.get("count", 0))})
+        except Exception:
+            pass
     records = state_store.list_all()[:capped]
     items: list[dict[str, Any]] = []
     for record in records:
-        hint = _epoch_hint(record, ssh_clients_by_env)
+        hint = _epoch_hint(record, ssh_clients_by_env or {})
         merged = record.to_dict()
         merged["epochHint"] = hint.get("epoch")
         items.append(merged)
@@ -117,7 +128,7 @@ def list_jobs(
 def get_job(
     job_id: str,
     state_store: JobStateStore,
-    ssh_clients_by_env: dict[str, SSHClient],
+    ssh_clients_by_env: dict[str, SSHClient] | None,
     notifier: FeishuNotifier,
     tracker: MLflowTracker | None = None,
     notifier_store: NotifierStateStore | None = None,
@@ -128,6 +139,7 @@ def get_job(
     primary_metric_key: str = "map5095",
     feishu_card_img_key: str | None = None,
     feishu_card_fallback_img_key: str | None = None,
+    control_client: HttpControlClient | None = None,
 ) -> dict[str, Any]:
     record = state_store.get(job_id)
     payload: dict[str, Any] = {}
@@ -165,10 +177,16 @@ def get_job(
                 error_code="JOB_NOT_FOUND",
                 message=f"job not found in local state: {job_id}",
                 retryable=False,
-                hint="refresh 需要本地状态（用于 SSH/pid/paths）；可先调用 yolo_start_training 创建任务",
+                hint=(
+                    "refresh 需要本地状态（用于 SSH/pid/paths）；"
+                    "可先调用 yolo_start_training 创建任务"
+                ),
                 payload={"jobId": job_id},
             )
-        ssh_client = _ssh_for_record(record, ssh_clients_by_env)
+        if ssh_clients_by_env and "default" in ssh_clients_by_env:
+            ssh_client = _ssh_for_record(record, ssh_clients_by_env)
+        else:
+            ssh_client = None
         status_payload = get_status(
             job_id,
             record.run_id,
@@ -182,12 +200,13 @@ def get_job(
             primary_metric_key=primary_metric_key,
             feishu_card_img_key=feishu_card_img_key,
             feishu_card_fallback_img_key=feishu_card_fallback_img_key,
+            control_client=control_client,
         )
         payload["liveStatus"] = status_payload
         refreshed = state_store.get(job_id) or record
         payload["record"] = refreshed.to_dict()
         job_dir = refreshed.paths.get("jobDir", "").strip()
-        if job_dir:
+        if job_dir and ssh_client is not None:
             args_path = f"{job_dir.rstrip('/')}/args.yaml"
             try:
                 stdout, _, code = ssh_client.execute(f"cat {shlex.quote(args_path)}")

@@ -2829,6 +2829,7 @@ name = "yolo-auto"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "fastapi" },
     { name = "httpx" },
     { name = "mcp" },
     { name = "mlflow" },
@@ -2836,6 +2837,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
+    { name = "uvicorn" },
 ]
 
 [package.optional-dependencies]
@@ -2847,6 +2849,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "fastapi", specifier = ">=0.116.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "mcp", specifier = ">=1.6.0" },
     { name = "mlflow", specifier = "==3.11.1" },
@@ -2857,6 +2860,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.1.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4.0" },
+    { name = "uvicorn", specifier = ">=0.35.0" },
 ]
 provides-extras = ["dev"]
 

@@ -8,9 +8,12 @@ services:
     restart: unless-stopped
     ports:
       - "2222:2222"
+      - "18080:18080"
     environment:
       # MLflow tracking backend used by yolo-auto
       MLFLOW_TRACKING_URI: "sqlite:////workspace/mlflow.db"
+      # 训练控制面 Bearer Token（建议通过 .env 或 secrets 注入）
+      YOLO_CONTROL_BEARER_TOKEN: ""
     gpus: all
     volumes:
       - /data/yolo-datasets:/workspace/datasets

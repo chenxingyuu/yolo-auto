@@ -12,10 +12,11 @@ from yolo_auto.errors import err, ok
 from yolo_auto.feishu import FeishuNotifier
 from yolo_auto.models import JobStatus
 from yolo_auto.notifier_state_store import NotifierStateStore
+from yolo_auto.remote_control import HttpControlClient, RemoteControlError
 from yolo_auto.ssh_client import SSHClient, SSHRemoteExecutionError
 from yolo_auto.state_store import JobStateStore
-from yolo_auto.tracker import MLflowTracker
 from yolo_auto.tools.metrics_csv import metric_value_from_parsed, parse_training_row
+from yolo_auto.tracker import MLflowTracker
 
 logger = logging.getLogger(__name__)
 
@@ -663,7 +664,7 @@ def get_status(
     job_id: str,
     run_id: str,
     state_store: JobStateStore,
-    ssh_client: SSHClient,
+    ssh_client: SSHClient | None,
     notifier: FeishuNotifier,
     *,
     tracker: MLflowTracker | None = None,
@@ -674,6 +675,7 @@ def get_status(
     primary_metric_key: str = "map5095",
     feishu_card_img_key: str | None = None,
     feishu_card_fallback_img_key: str | None = None,
+    control_client: HttpControlClient | None = None,
 ) -> dict[str, object]:
     now = int(time.time())
     record = state_store.get(job_id)
@@ -687,6 +689,61 @@ def get_status(
         )
 
     effective_run_id = record.run_id or run_id
+
+    if control_client is not None:
+        try:
+            remote = control_client.get_training_status(
+                {
+                    "jobId": job_id,
+                    "pid": record.pid,
+                    "metricsPath": record.paths.get("metricsPath", ""),
+                    "logPath": record.paths.get("logPath", ""),
+                    "totalEpochs": record.train_epochs or 0,
+                    "createdAt": record.created_at,
+                }
+            )
+        except RemoteControlError as exc:
+            return err(
+                error_code=exc.error_code,
+                message=str(exc),
+                retryable=exc.retryable,
+                hint=exc.hint,
+                payload={"jobId": job_id, "runId": effective_run_id, **exc.payload},
+            )
+        status_text = str(remote.get("status", record.status.value))
+        target_status = None
+        if status_text == JobStatus.COMPLETED.value:
+            target_status = JobStatus.COMPLETED
+        elif status_text == JobStatus.FAILED.value:
+            target_status = JobStatus.FAILED
+        elif status_text == JobStatus.STOPPED.value:
+            target_status = JobStatus.STOPPED
+        elif status_text == JobStatus.RUNNING.value:
+            target_status = JobStatus.RUNNING
+        if target_status is not None and record.status != target_status:
+            state_store.update_status(job_id, target_status, now)
+        return ok(
+            {
+                "jobId": job_id,
+                "runId": effective_run_id,
+                "status": status_text,
+                "progress": float(remote.get("progress", 0.0) or 0.0),
+                "metrics": dict(remote.get("metrics", {})),
+                "artifacts": {
+                    "best": record.paths.get("bestPath", ""),
+                    "last": record.paths.get("lastPath", ""),
+                },
+            }
+        )
+
+    if ssh_client is None:
+        return err(
+            error_code="REMOTE_CLIENT_MISSING",
+            message="ssh client is required when control client is disabled",
+            retryable=False,
+            hint="请检查 YOLO_REMOTE_MODE 配置",
+            payload={"jobId": job_id, "runId": effective_run_id},
+        )
 
     # 优先从 MLflow 获取最新指标与进度；读取失败再回退到 results.csv。
     if tracker is not None:
@@ -762,7 +819,11 @@ def get_status(
                         header_template="blue",
                         epoch_text=f"{epoch_i}/{total_epochs}",
                         elapsed_text=_format_duration(elapsed_seconds),
-                        eta_text=_format_duration(eta_seconds) if eta_seconds is not None else "n/a",
+                        eta_text=(
+                            _format_duration(eta_seconds)
+                            if eta_seconds is not None
+                            else "n/a"
+                        ),
                         updated_time_text=_format_card_timestamp(now),
                         mlflow_url=mlflow_url,
                         top_img_key=feishu_card_img_key,
@@ -989,7 +1050,11 @@ def get_status(
                 header_template="blue",
                 epoch_text=f"{epoch}/{total_epochs}",
                 elapsed_text=_format_duration(elapsed_seconds),
-                eta_text=_format_duration(eta_seconds) if eta_seconds is not None else "n/a",
+                eta_text=(
+                    _format_duration(eta_seconds)
+                    if eta_seconds is not None
+                    else "n/a"
+                ),
                 updated_time_text=_format_card_timestamp(now),
                 mlflow_url=mlflow_url,
                 top_img_key=feishu_card_img_key,

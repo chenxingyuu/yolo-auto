@@ -9,6 +9,7 @@ from yolo_auto.errors import err, ok
 from yolo_auto.feishu import FeishuNotifier
 from yolo_auto.models import JobRecord, JobStatus
 from yolo_auto.notifier_state_store import NotifierStateStore
+from yolo_auto.remote_control import HttpControlClient, RemoteControlError
 from yolo_auto.ssh_client import SSHClient, SSHRemoteExecutionError
 from yolo_auto.state_store import JobStateStore
 from yolo_auto.tools.status import (
@@ -131,7 +132,7 @@ def _fourth_metric_for_start_card(extra_args: dict[str, Any] | None) -> tuple[st
 
 def start_training(
     req: TrainRequest,
-    ssh_client: SSHClient,
+    ssh_client: SSHClient | None,
     notifier: FeishuNotifier,
     state_store: JobStateStore,
     *,
@@ -141,6 +142,7 @@ def start_training(
     mlflow_url: str | None = None,
     feishu_card_img_key: str | None = None,
     feishu_card_fallback_img_key: str | None = None,
+    control_client: HttpControlClient | None = None,
 ) -> dict[str, object]:
     now = int(time.time())
     existing = state_store.get(req.job_id)
@@ -149,16 +151,6 @@ def start_training(
 
     model_abs_path = _resolve_remote_path(req.model, req.work_dir)
     model_q = shlex.quote(model_abs_path)
-    _, _, model_exists_code = ssh_client.execute(f"test -f {model_q}")
-    if model_exists_code != 0:
-        return err(
-            error_code="MODEL_NOT_FOUND",
-            message=f"model not found: {model_abs_path}",
-            retryable=False,
-            hint="请先确认模型路径存在，或先调用 yolo_setup_env 做环境预检查",
-            payload={"jobId": req.job_id, "modelPath": model_abs_path},
-        )
-
     ds_prov = _dataset_provenance_from_request(req)
     run_id = req.job_id
     job_dir = f"{req.jobs_dir}/{req.job_id}"
@@ -191,13 +183,55 @@ def start_training(
         f"export MLFLOW_RUN_NAME={shlex.quote(req.job_id)} && "
         f"yolo detect train model={req.model} data={req.data_config_path} "
         f"epochs={req.epochs} imgsz={req.img_size} batch={req.batch}{lr_cli} "
-        # Ultralytics 默认会在目标目录已存在时自动给 name 追加数字后缀（如 xxx2）。
-        # 我们这里会先 mkdir job_dir 以写入 train.log，因此显式设置 exist_ok=True，
-        # 避免保存目录与 MCP 记录的 jobDir 不一致导致 results.csv 读取失败。
         f"project={req.jobs_dir} name={req.job_id} exist_ok=True {extra_cli_args} > {log_path} 2>&1"
     )
     try:
-        pid, _ = ssh_client.execute_background(train_cmd)
+        if control_client is not None:
+            remote = control_client.start_training(
+                {
+                    "jobId": req.job_id,
+                    "runName": req.job_id,
+                    "modelPath": model_abs_path,
+                    "dataPath": data_abs_path,
+                    "project": req.jobs_dir,
+                    "name": req.job_id,
+                    "device": (req.extra_args or {}).get("device"),
+                    "epochs": req.epochs,
+                    "imgsz": req.img_size,
+                    "batch": req.batch,
+                    "extraArgs": req.extra_args,
+                    "workDir": req.work_dir,
+                    "mlflowTrackingUri": tracking_uri,
+                    "mlflowExperimentName": experiment_name,
+                }
+            )
+            pid = str(remote.get("pid") or remote.get("executionId") or "")
+            if not pid:
+                raise RemoteControlError(
+                    "REMOTE_INVALID_RESPONSE",
+                    "missing pid/executionId in start response",
+                    retryable=False,
+                    hint="检查控制面 train/start 返回格式",
+                )
+        else:
+            if ssh_client is None:
+                return err(
+                    error_code="REMOTE_CLIENT_MISSING",
+                    message="ssh client is required when control client is disabled",
+                    retryable=False,
+                    hint="请检查 YOLO_REMOTE_MODE 配置",
+                    payload={"jobId": req.job_id},
+                )
+            _, _, model_exists_code = ssh_client.execute(f"test -f {model_q}")
+            if model_exists_code != 0:
+                return err(
+                    error_code="MODEL_NOT_FOUND",
+                    message=f"model not found: {model_abs_path}",
+                    retryable=False,
+                    hint="请先确认模型路径存在，或先调用 yolo_setup_env 做环境预检查",
+                    payload={"jobId": req.job_id, "modelPath": model_abs_path},
+                )
+            pid, _ = ssh_client.execute_background(train_cmd)
     except SSHRemoteExecutionError as exc:
         return err(
             error_code=exc.error_code,
@@ -205,6 +239,14 @@ def start_training(
             retryable=exc.retryable,
             hint=exc.hint,
             payload={"jobId": req.job_id},
+        )
+    except RemoteControlError as exc:
+        return err(
+            error_code=exc.error_code,
+            message=str(exc),
+            retryable=exc.retryable,
+            hint=exc.hint,
+            payload={"jobId": req.job_id, **exc.payload},
         )
     except Exception as exc:
         return err(
@@ -282,12 +324,13 @@ def start_training(
 def stop_training(
     job_id: str,
     run_id: str,
-    ssh_client: SSHClient,
+    ssh_client: SSHClient | None,
     notifier: FeishuNotifier,
     state_store: JobStateStore,
     *,
     notifier_store: NotifierStateStore | None = None,
     mlflow_url: str | None = None,
+    control_client: HttpControlClient | None = None,
 ) -> dict[str, object]:
     now = int(time.time())
     record = state_store.get(job_id)
@@ -296,22 +339,56 @@ def stop_training(
         return ok(record.to_dict())
 
     pid = record.pid if record else ""
-    if pid and not ssh_client.process_alive(pid):
+    if (
+        control_client is None
+        and pid
+        and ssh_client is not None
+        and not ssh_client.process_alive(pid)
+    ):
         updated = state_store.update_status(job_id, JobStatus.STOPPED, now) if record else None
         if updated:
             return ok(updated.to_dict())
         return ok({"jobId": job_id, "runId": effective_run_id, "status": JobStatus.STOPPED.value})
-
-    kill_cmd = f"pkill -f \"name={job_id}\""
-    _, stderr_text, exit_code = ssh_client.execute(kill_cmd)
-    if exit_code != 0:
-        return err(
-            error_code="STOP_FAILED",
-            message=stderr_text.strip() or "unable to stop training process",
-            retryable=True,
-            hint="确认 jobId 是否正确，或稍后重试 stop",
-            payload={"jobId": job_id, "runId": effective_run_id},
-        )
+    if control_client is not None:
+        try:
+            stopped = control_client.stop_training(
+                {"jobId": job_id, "executionId": pid if pid else None}
+            )
+            if str(stopped.get("status", "")).strip() not in {"stopped", "already_stopped"}:
+                return err(
+                    error_code="STOP_FAILED",
+                    message=f"unexpected stop response: {stopped}",
+                    retryable=True,
+                    hint="稍后重试 stop",
+                    payload={"jobId": job_id, "runId": effective_run_id},
+                )
+        except RemoteControlError as exc:
+            return err(
+                error_code=exc.error_code,
+                message=str(exc),
+                retryable=exc.retryable,
+                hint=exc.hint,
+                payload={"jobId": job_id, "runId": effective_run_id, **exc.payload},
+            )
+    else:
+        if ssh_client is None:
+            return err(
+                error_code="REMOTE_CLIENT_MISSING",
+                message="ssh client is required when control client is disabled",
+                retryable=False,
+                hint="请检查 YOLO_REMOTE_MODE 配置",
+                payload={"jobId": job_id, "runId": effective_run_id},
+            )
+        kill_cmd = f"pkill -f \"name={job_id}\""
+        _, stderr_text, exit_code = ssh_client.execute(kill_cmd)
+        if exit_code != 0:
+            return err(
+                error_code="STOP_FAILED",
+                message=stderr_text.strip() or "unable to stop training process",
+                retryable=True,
+                hint="确认 jobId 是否正确，或稍后重试 stop",
+                payload={"jobId": job_id, "runId": effective_run_id},
+            )
 
     if record:
         updated = state_store.update_status(job_id, JobStatus.STOPPED, now)
