@@ -46,6 +46,73 @@ class MLflowTracker:
         base = self._external_url.rstrip("/")
         return f"{base}/#/experiments/{exp_id}"
 
+    def get_run_url(self, run_id: str) -> str | None:
+        """Return MLflow UI URL for a specific run."""
+        rid = (run_id or "").strip()
+        if not rid or not self._external_url:
+            return None
+        exp_id = self._get_experiment_id()
+        if not exp_id:
+            return None
+        base = self._external_url.rstrip("/")
+        enc = quote(rid, safe="")
+        return f"{base}/#/experiments/{exp_id}/runs/{enc}"
+
+    @staticmethod
+    def _escape_filter_value(value: str) -> str:
+        # MLflow filter string uses single quotes; escape by doubling.
+        return value.replace("'", "''")
+
+    def find_latest_run_for_job_id(self, job_id: str) -> Run | None:
+        """Best-effort mapping jobId -> latest run.
+
+        Strategy:
+        - Prefer explicit tag `yolo_job_id` if present.
+        - Fallback to `attribute.run_name = jobId` (we export MLFLOW_RUN_NAME=jobId).
+        """
+        jid = (job_id or "").strip()
+        if not jid:
+            return None
+        esc = self._escape_filter_value(jid)
+        # Prefer tag mapping when available.
+        try:
+            runs = mlflow.search_runs(
+                experiment_names=[self._experiment_name],
+                filter_string=f"tags.yolo_job_id = '{esc}'",
+                order_by=["attribute.start_time DESC"],
+                output_format="list",
+            )
+            if runs:
+                return runs[0]
+        except Exception:
+            pass
+        # Fallback to run_name mapping.
+        try:
+            runs = mlflow.search_runs(
+                experiment_names=[self._experiment_name],
+                filter_string=f"attribute.run_name = '{esc}'",
+                order_by=["attribute.start_time DESC"],
+                output_format="list",
+            )
+            if runs:
+                return runs[0]
+        except Exception:
+            return None
+        return None
+
+    def list_recent_runs(self, *, limit: int = 20) -> list[Run]:
+        capped = max(1, min(int(limit), 100))
+        try:
+            runs = mlflow.search_runs(
+                experiment_names=[self._experiment_name],
+                order_by=["attribute.start_time DESC"],
+                max_results=capped,
+                output_format="list",
+            )
+        except Exception:
+            return []
+        return list(runs[:capped])
+
     def compare_runs(
         self,
         metric_key: str,

@@ -86,10 +86,41 @@ def _label_dir_for_val(root: Path, val_rel: str) -> Path:
     return root / "labels" / val_rel_path.name
 
 
+def _label_path_for_image(img_path: Path) -> Path:
+    posix = img_path.resolve().as_posix()
+    if "/images/" in posix:
+        return Path(posix.replace("/images/", "/labels/", 1)).with_suffix(".txt")
+    p = img_path.resolve()
+    return p.parent / f"{p.stem}.txt"
+
+
+def _paths_from_val_txt(list_file: Path, root: Path, yaml_dir: Path) -> list[Path]:
+    images: list[Path] = []
+    for line in list_file.read_text(encoding="utf-8", errors="replace").splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        cand = Path(s)
+        if cand.is_absolute():
+            ip = cand.resolve()
+        else:
+            ip = (root / s).resolve()
+            if not ip.is_file():
+                ip = (yaml_dir / s).resolve()
+            if not ip.is_file():
+                ip = (list_file.parent / s).resolve()
+        if not ip.is_file():
+            print(f"missing image (val list): {s!r} -> {ip}", file=sys.stderr)
+            sys.exit(5)
+        images.append(ip)
+    return images
+
+
 def main() -> None:
     best = sys.argv[1]
     data_yaml = Path(sys.argv[2]).resolve()
     out_path = Path(sys.argv[3]).resolve()
+    yaml_dir = data_yaml.parent
 
     imgsz_raw = os.environ.get("YOLO_QC_IMGSZ", "").strip()
     imgsz = int(imgsz_raw) if imgsz_raw else None
@@ -98,19 +129,15 @@ def main() -> None:
     cfg = yaml.safe_load(data_yaml.read_text(encoding="utf-8"))
     root = Path(cfg.get("path", "."))
     if not root.is_absolute():
-        root = (data_yaml.parent / root).resolve()
+        root = (yaml_dir / root).resolve()
 
     val_rel = cfg.get("val")
     if not val_rel:
         print("dataset yaml missing 'val' key", file=sys.stderr)
         sys.exit(2)
 
-    val_img_dir = (root / val_rel).resolve()
-    if not val_img_dir.is_dir():
-        print(f"val image dir not found: {val_img_dir}", file=sys.stderr)
-        sys.exit(3)
-
-    label_dir = _label_dir_for_val(root, str(val_rel))
+    val_ref = Path(str(val_rel))
+    val_path = val_ref.resolve() if val_ref.is_absolute() else (root / val_ref).resolve()
 
     predict_kw: dict[str, object] = {"verbose": False, "save": False}
     if imgsz is not None:
@@ -120,19 +147,44 @@ def main() -> None:
 
     model = YOLO(best)
     exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
-    images = sorted(p for p in val_img_dir.rglob("*") if p.suffix.lower() in exts)
+    val_dir_for_rel: Path | None = None
+
+    if val_path.is_file() and val_path.suffix.lower() == ".txt":
+        images = _paths_from_val_txt(val_path, root, yaml_dir)
+    elif val_path.is_dir():
+        val_dir_for_rel = val_path
+        images = sorted(p for p in val_path.rglob("*") if p.suffix.lower() in exts)
+    else:
+        print(f"val must be a directory or .txt image list, got: {val_path}", file=sys.stderr)
+        sys.exit(3)
+
     if not images:
-        print(f"no images under {val_img_dir}", file=sys.stderr)
+        print(f"no images resolved for val: {val_path}", file=sys.stderr)
         sys.exit(4)
+
+    root_res = root.resolve()
+    label_dir_fallback = _label_dir_for_val(root, str(val_rel))
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     results_iter = model.predict(source=[str(p) for p in images], stream=True, **predict_kw)
 
     with out_path.open("w", encoding="utf-8") as fh:
         for img_path, res in zip(images, results_iter, strict=True):
-            rel_img = str(img_path.relative_to(val_img_dir))
-            stem = img_path.stem
-            label_path = (label_dir / f"{stem}.txt").resolve()
+            ip = img_path.resolve()
+            if val_dir_for_rel is not None:
+                try:
+                    rel_img = str(ip.relative_to(val_dir_for_rel.resolve()))
+                except ValueError:
+                    rel_img = ip.name
+            else:
+                try:
+                    rel_img = str(ip.relative_to(root_res))
+                except ValueError:
+                    rel_img = ip.name
+            stem = ip.stem
+            label_path = _label_path_for_image(ip)
+            if not label_path.is_file():
+                label_path = (label_dir_fallback / f"{stem}.txt").resolve()
             gt_boxes = _count_gt_boxes(label_path)
 
             boxes = res.boxes
@@ -146,7 +198,7 @@ def main() -> None:
                 mean_conf = float(sum(confs) / len(confs))
 
             row = {
-                "image": str(img_path),
+                "image": str(ip),
                 "relImage": rel_img,
                 "stem": stem,
                 "gtBoxes": gt_boxes,
@@ -155,6 +207,7 @@ def main() -> None:
                 "meanConf": round(mean_conf, 6),
             }
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+            fh.flush()
 
 
 if __name__ == "__main__":

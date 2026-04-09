@@ -11,8 +11,10 @@ from typing import Any, Literal
 from yolo_auto.errors import err, ok
 from yolo_auto.feishu import FeishuNotifier
 from yolo_auto.models import JobStatus
+from yolo_auto.notifier_state_store import NotifierStateStore
 from yolo_auto.ssh_client import SSHClient, SSHRemoteExecutionError
 from yolo_auto.state_store import JobStateStore
+from yolo_auto.tracker import MLflowTracker
 from yolo_auto.tools.metrics_csv import metric_value_from_parsed, parse_training_row
 
 logger = logging.getLogger(__name__)
@@ -616,12 +618,20 @@ def _upsert_training_card(
     record,
     now_ts: int,
     state_store: JobStateStore,
+    notifier_store: NotifierStateStore | None,
     notifier: FeishuNotifier,
     card: dict[str, Any],
 ):
-    if record.feishu_message_id:
+    message_id = None
+    if notifier_store is not None:
+        st = notifier_store.get(record.job_id)
+        message_id = st.feishu_message_id if st else None
+    if not message_id:
+        message_id = record.feishu_message_id
+
+    if message_id:
         updated_ok = notifier.update_schema_card(
-            message_id=record.feishu_message_id,
+            message_id=message_id,
             card=card,
         )
         if updated_ok:
@@ -629,14 +639,21 @@ def _upsert_training_card(
         logger.warning(
             "Feishu card update failed, fallback to resend: job_id=%s message_id=%s",
             record.job_id,
-            record.feishu_message_id,
+            message_id,
         )
     new_message_id = notifier.send_schema_card_with_message_id(card=card)
     if not new_message_id:
         logger.warning(
             "Feishu card send failed: job_id=%s has_existing_message=%s",
             record.job_id,
-            bool(record.feishu_message_id),
+            bool(message_id),
+        )
+        return record
+    if notifier_store is not None:
+        notifier_store.upsert(
+            job_id=record.job_id,
+            now_ts=now_ts,
+            feishu_message_id=new_message_id,
         )
         return record
     return state_store.mark_feishu_message(record.job_id, new_message_id, now_ts)
@@ -649,6 +666,8 @@ def get_status(
     ssh_client: SSHClient,
     notifier: FeishuNotifier,
     *,
+    tracker: MLflowTracker | None = None,
+    notifier_store: NotifierStateStore | None = None,
     mlflow_url: str | None = None,
     feishu_report_enable: bool = True,
     feishu_report_every_n_epochs: int = 5,
@@ -668,6 +687,166 @@ def get_status(
         )
 
     effective_run_id = record.run_id or run_id
+
+    # 优先从 MLflow 获取最新指标与进度；读取失败再回退到 results.csv。
+    if tracker is not None:
+        ml_run = tracker.find_latest_run_for_job_id(job_id)
+        if ml_run is not None:
+            metrics = ml_run.data.metrics or {}
+
+            def _pick_float(*keys: str) -> float | None:
+                for key in keys:
+                    if key in metrics:
+                        try:
+                            return float(metrics[key])
+                        except Exception:
+                            return None
+                return None
+
+            epoch_val = _pick_float("epoch", "train/epoch", "metrics/epoch")
+            epoch_i = int(epoch_val) if epoch_val is not None else 0
+            loss_val = _pick_float("loss", "train/loss", "metrics/loss")
+            map50_val = _pick_float("map50", "metrics/map50", "val/map50")
+            map5095_val = _pick_float(
+                "map5095",
+                "metrics/map5095",
+                "val/map5095",
+                "val/map50-95",
+            )
+            precision_val = _pick_float("precision", "metrics/precision", "val/precision")
+            recall_val = _pick_float("recall", "metrics/recall", "val/recall")
+
+            total_epochs = max(record.train_epochs or 100, 1)
+            progress = round(min(1.0, epoch_i / total_epochs), 4) if epoch_i > 0 else 0.0
+            elapsed_seconds = max(now - record.created_at, 0)
+            eta_seconds = _estimate_eta_seconds(
+                epoch=epoch_i,
+                total_epochs=total_epochs,
+                elapsed_seconds=elapsed_seconds,
+            )
+
+            # MLflow 本身不提供进程存活；仍用 SSH pid 判断是否还在跑。
+            process_alive = ssh_client.process_alive(record.pid) if record.pid else False
+            status_value = JobStatus.RUNNING.value if process_alive else JobStatus.COMPLETED.value
+
+            primary_value = None
+            if epoch_i > 0:
+                primary_value = metric_value_from_parsed(
+                    {
+                        "epoch": epoch_i,
+                        "loss": loss_val or 0.0,
+                        "map50": map50_val or 0.0,
+                        "map5095": map5095_val or 0.0,
+                        "precision": precision_val or 0.0,
+                        "recall": recall_val or 0.0,
+                    },
+                    primary_metric_key,
+                )
+
+            # 里程碑推送（不强依赖 results.csv 的曲线图）。
+            if process_alive and feishu_report_enable:
+                milestone_n = feishu_report_every_n_epochs
+                last_reported_epoch = record.last_reported_epoch
+                if notifier_store is not None:
+                    st = notifier_store.get(job_id)
+                    if st is not None:
+                        last_reported_epoch = st.last_reported_epoch
+                should_report_milestone = (
+                    milestone_n > 0
+                    and epoch_i > 0
+                    and epoch_i >= last_reported_epoch + milestone_n
+                )
+                if should_report_milestone:
+                    card = _build_training_schema_card(
+                        title="YOLO模型训练里程碑",
+                        header_template="blue",
+                        epoch_text=f"{epoch_i}/{total_epochs}",
+                        elapsed_text=_format_duration(elapsed_seconds),
+                        eta_text=_format_duration(eta_seconds) if eta_seconds is not None else "n/a",
+                        updated_time_text=_format_card_timestamp(now),
+                        mlflow_url=mlflow_url,
+                        top_img_key=feishu_card_img_key,
+                        top_img_fallback_key=feishu_card_fallback_img_key,
+                        training_rows=None,
+                    )
+                    record = _upsert_training_card(
+                        record=record,
+                        now_ts=now,
+                        state_store=state_store,
+                        notifier_store=notifier_store,
+                        notifier=notifier,
+                        card=card,
+                    )
+                    if notifier_store is not None:
+                        notifier_store.upsert(
+                            job_id=job_id,
+                            now_ts=now,
+                            last_reported_epoch=epoch_i,
+                        )
+                    else:
+                        _ = state_store.mark_milestone_epoch(job_id, epoch_i, now)
+
+            # 完成态：如果进程结束，就落库并发完成卡片。
+            if not process_alive and record.status != JobStatus.COMPLETED:
+                updated = state_store.update_status(job_id, JobStatus.COMPLETED, now)
+                card = _build_training_schema_card(
+                    title="YOLO模型训练完成",
+                    header_template="green",
+                    epoch_text=f"{epoch_i}/{total_epochs}" if epoch_i > 0 else "--/--",
+                    elapsed_text=_format_duration(elapsed_seconds),
+                    eta_text="0s",
+                    updated_time_text=_format_card_timestamp(now),
+                    mlflow_url=mlflow_url,
+                    top_img_key=feishu_card_img_key,
+                    top_img_fallback_key=feishu_card_fallback_img_key,
+                    training_rows=None,
+                )
+                updated = _upsert_training_card(
+                    record=updated,
+                    now_ts=now,
+                    state_store=state_store,
+                    notifier_store=notifier_store,
+                    notifier=notifier,
+                    card=card,
+                )
+                last_notified_state = updated.last_notified_state
+                if notifier_store is not None:
+                    st = notifier_store.get(job_id)
+                    if st is not None:
+                        last_notified_state = st.last_notified_state
+                if last_notified_state != JobStatus.COMPLETED:
+                    if notifier_store is not None:
+                        notifier_store.upsert(
+                            job_id=job_id,
+                            now_ts=now,
+                            last_notified_state=JobStatus.COMPLETED,
+                        )
+                    else:
+                        state_store.mark_notified(job_id, JobStatus.COMPLETED, now)
+                status_value = updated.status.value
+
+            return ok(
+                {
+                    "jobId": job_id,
+                    "runId": ml_run.info.run_id or effective_run_id,
+                    "status": status_value,
+                    "progress": progress,
+                    "metrics": {
+                        "epoch": epoch_i if epoch_i > 0 else None,
+                        "loss": loss_val,
+                        "map50": map50_val,
+                        "map5095": map5095_val,
+                        "precision": precision_val,
+                        "recall": recall_val,
+                        "primaryMetric": primary_value,
+                        "mlflowMetrics": dict(metrics),
+                    },
+                    "artifacts": {
+                        "best": record.paths.get("bestPath", ""),
+                        "last": record.paths.get("lastPath", ""),
+                    },
+                }
+            )
     metrics_path = (record.paths.get("metricsPath") or "").strip()
     if not metrics_path:
         return err(
@@ -727,11 +906,20 @@ def get_status(
             record=updated,
             now_ts=now,
             state_store=state_store,
+            notifier_store=notifier_store,
             notifier=notifier,
             card=card,
         )
-        if updated.last_notified_state != target:
-            state_store.mark_notified(job_id, target, now)
+        last_notified_state = updated.last_notified_state
+        if notifier_store is not None:
+            st = notifier_store.get(job_id)
+            if st is not None:
+                last_notified_state = st.last_notified_state
+        if last_notified_state != target:
+            if notifier_store is not None:
+                notifier_store.upsert(job_id=job_id, now_ts=now, last_notified_state=target)
+            else:
+                state_store.mark_notified(job_id, target, now)
         if target == JobStatus.FAILED:
             return err(
                 error_code="TRAIN_FAILED",
@@ -785,10 +973,15 @@ def get_status(
 
     if process_alive and feishu_report_enable:
         milestone_n = feishu_report_every_n_epochs
+        last_reported_epoch = record.last_reported_epoch
+        if notifier_store is not None:
+            st = notifier_store.get(job_id)
+            if st is not None:
+                last_reported_epoch = st.last_reported_epoch
         should_report_milestone = (
             milestone_n > 0
             and epoch > 0
-            and epoch >= record.last_reported_epoch + milestone_n
+            and epoch >= last_reported_epoch + milestone_n
         )
         if should_report_milestone:
             card = _build_training_schema_card(
@@ -807,10 +1000,14 @@ def get_status(
                 record=record,
                 now_ts=now,
                 state_store=state_store,
+                notifier_store=notifier_store,
                 notifier=notifier,
                 card=card,
             )
-            record = state_store.mark_milestone_epoch(job_id, epoch, now)
+            if notifier_store is not None:
+                notifier_store.upsert(job_id=job_id, now_ts=now, last_reported_epoch=epoch)
+            else:
+                record = state_store.mark_milestone_epoch(job_id, epoch, now)
 
     if not process_alive:
         updated = state_store.update_status(job_id, JobStatus.COMPLETED, now)
@@ -830,11 +1027,24 @@ def get_status(
             record=updated,
             now_ts=now,
             state_store=state_store,
+            notifier_store=notifier_store,
             notifier=notifier,
             card=card,
         )
-        if updated.last_notified_state != JobStatus.COMPLETED:
-            state_store.mark_notified(job_id, JobStatus.COMPLETED, now)
+        last_notified_state = updated.last_notified_state
+        if notifier_store is not None:
+            st = notifier_store.get(job_id)
+            if st is not None:
+                last_notified_state = st.last_notified_state
+        if last_notified_state != JobStatus.COMPLETED:
+            if notifier_store is not None:
+                notifier_store.upsert(
+                    job_id=job_id,
+                    now_ts=now,
+                    last_notified_state=JobStatus.COMPLETED,
+                )
+            else:
+                state_store.mark_notified(job_id, JobStatus.COMPLETED, now)
         status_value = updated.status.value
     else:
         status_value = JobStatus.RUNNING.value

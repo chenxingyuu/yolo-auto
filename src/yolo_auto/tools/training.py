@@ -8,14 +8,13 @@ from typing import Any
 from yolo_auto.errors import err, ok
 from yolo_auto.feishu import FeishuNotifier
 from yolo_auto.models import JobRecord, JobStatus
+from yolo_auto.notifier_state_store import NotifierStateStore
 from yolo_auto.ssh_client import SSHClient, SSHRemoteExecutionError
 from yolo_auto.state_store import JobStateStore
 from yolo_auto.tools.status import (
     build_schema_card_with_mlflow_button,
     build_training_started_schema_card,
 )
-
-_FORCED_REMOTE_MLFLOW_TRACKING_URI = "sqlite:////workspace/mlflow.db"
 
 
 @dataclass(frozen=True)
@@ -136,6 +135,9 @@ def start_training(
     notifier: FeishuNotifier,
     state_store: JobStateStore,
     *,
+    mlflow_tracking_uri: str,
+    mlflow_experiment_name: str,
+    notifier_store: NotifierStateStore | None = None,
     mlflow_url: str | None = None,
     feishu_card_img_key: str | None = None,
     feishu_card_fallback_img_key: str | None = None,
@@ -164,9 +166,29 @@ def start_training(
     data_abs_path = _resolve_remote_path(req.data_config_path, req.work_dir)
     extra_cli_args = _build_extra_cli_args(req.extra_args)
     lr_cli = f" lr0={req.learning_rate}" if req.learning_rate is not None else ""
+    tracking_uri = (mlflow_tracking_uri or "").strip()
+    experiment_name = (mlflow_experiment_name or "").strip()
+    if not tracking_uri:
+        return err(
+            error_code="MISSING_MLFLOW_TRACKING_URI",
+            message="mlflow tracking uri is empty",
+            retryable=False,
+            hint="请在服务端环境变量配置 MLFLOW_TRACKING_URI（训练端需可访问同一 Tracking Server）",
+            payload={"jobId": req.job_id},
+        )
+    if not experiment_name:
+        return err(
+            error_code="MISSING_MLFLOW_EXPERIMENT_NAME",
+            message="mlflow experiment name is empty",
+            retryable=False,
+            hint="请在服务端环境变量配置 MLFLOW_EXPERIMENT_NAME",
+            payload={"jobId": req.job_id},
+        )
     train_cmd = (
         f"mkdir -p {job_dir} && cd {req.work_dir} && "
-        f"export MLFLOW_TRACKING_URI={_FORCED_REMOTE_MLFLOW_TRACKING_URI} && "
+        f"export MLFLOW_TRACKING_URI={shlex.quote(tracking_uri)} && "
+        f"export MLFLOW_EXPERIMENT_NAME={shlex.quote(experiment_name)} && "
+        f"export MLFLOW_RUN_NAME={shlex.quote(req.job_id)} && "
         f"yolo detect train model={req.model} data={req.data_config_path} "
         f"epochs={req.epochs} imgsz={req.img_size} batch={req.batch}{lr_cli} "
         # Ultralytics 默认会在目标目录已存在时自动给 name 追加数字后缀（如 xxx2）。
@@ -243,7 +265,14 @@ def start_training(
         top_img_key=feishu_card_img_key,
         top_img_fallback_key=feishu_card_fallback_img_key,
     )
-    notifier.send_schema_card_with_message_id(card=card)
+    message_id = notifier.send_schema_card_with_message_id(card=card)
+    if notifier_store is not None and message_id:
+        notifier_store.upsert(
+            job_id=req.job_id,
+            now_ts=now,
+            feishu_message_id=message_id,
+            last_notified_state=JobStatus.RUNNING,
+        )
     payload = record.to_dict()
     if training_hints:
         payload = {**payload, "trainingHints": training_hints}
@@ -257,6 +286,7 @@ def stop_training(
     notifier: FeishuNotifier,
     state_store: JobStateStore,
     *,
+    notifier_store: NotifierStateStore | None = None,
     mlflow_url: str | None = None,
 ) -> dict[str, object]:
     now = int(time.time())
@@ -285,7 +315,11 @@ def stop_training(
 
     if record:
         updated = state_store.update_status(job_id, JobStatus.STOPPED, now)
-        if updated.last_notified_state != JobStatus.STOPPED:
+        last_notified = updated.last_notified_state
+        if notifier_store is not None:
+            st = notifier_store.get(job_id)
+            last_notified = st.last_notified_state if st else last_notified
+        if last_notified != JobStatus.STOPPED:
             card = build_schema_card_with_mlflow_button(
                 title="[YOLO] 训练已停止",
                 header_template="orange",
@@ -294,9 +328,17 @@ def stop_training(
                 button_element_id="mlflow_stop_btn",
             )
             message_id = notifier.send_schema_card_with_message_id(card=card)
-            if message_id:
-                state_store.mark_feishu_message(job_id, message_id, now)
-            state_store.mark_notified(job_id, JobStatus.STOPPED, now)
+            if notifier_store is not None:
+                notifier_store.upsert(
+                    job_id=job_id,
+                    now_ts=now,
+                    feishu_message_id=message_id,
+                    last_notified_state=JobStatus.STOPPED,
+                )
+            else:
+                if message_id:
+                    state_store.mark_feishu_message(job_id, message_id, now)
+                state_store.mark_notified(job_id, JobStatus.STOPPED, now)
         return ok(updated.to_dict())
     card = build_schema_card_with_mlflow_button(
         title="[YOLO] 训练已停止",

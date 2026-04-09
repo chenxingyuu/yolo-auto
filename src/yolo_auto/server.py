@@ -11,6 +11,7 @@ from starlette.responses import PlainTextResponse
 from yolo_auto.config import load_settings
 from yolo_auto.errors import err
 from yolo_auto.feishu import FeishuNotifier
+from yolo_auto.notifier_state_store import NotifierStateStore
 from yolo_auto.prompts import register_prompts
 from yolo_auto.resources import register_resources
 from yolo_auto.ssh_client import SSHClient, SSHConfig
@@ -102,6 +103,7 @@ TRACKER = MLflowTracker(
     )
 )
 STATE_STORE = JobStateStore(SETTINGS.yolo_state_file)
+NOTIFY_STORE = NotifierStateStore(SETTINGS.yolo_notify_state_file)
 
 
 def _merge_training_cli_extras(
@@ -648,6 +650,9 @@ def yolo_start_training(
         ssh_client,
         NOTIFIER,
         STATE_STORE,
+        mlflow_tracking_uri=SETTINGS.mlflow_tracking_uri,
+        mlflow_experiment_name=SETTINGS.mlflow_experiment_name,
+        notifier_store=NOTIFY_STORE,
         mlflow_url=TRACKER.get_experiment_url(),
         feishu_card_img_key=SETTINGS.feishu_card_img_key,
         feishu_card_fallback_img_key=SETTINGS.feishu_card_fallback_img_key,
@@ -674,6 +679,8 @@ def yolo_get_status(
         STATE_STORE,
         ssh_client,
         NOTIFIER,
+        tracker=TRACKER,
+        notifier_store=NOTIFY_STORE,
         mlflow_url=TRACKER.get_experiment_url(),
         feishu_report_enable=SETTINGS.feishu_report_enable,
         feishu_report_every_n_epochs=SETTINGS.feishu_report_every_n_epochs,
@@ -703,6 +710,7 @@ def yolo_stop_training(
         ssh_client,
         NOTIFIER,
         STATE_STORE,
+        notifier_store=NOTIFY_STORE,
         mlflow_url=TRACKER.get_experiment_url(),
     )
 
@@ -887,7 +895,7 @@ def yolo_list_jobs(
 
     用于在对话中快速查看有哪些 jobId 可继续 get_status 或 stop。
     """
-    return list_jobs(STATE_STORE, SSH_BY_ENV, limit=limit)
+    return list_jobs(STATE_STORE, SSH_BY_ENV, TRACKER, limit=limit)
 
 
 @mcp.tool(name="yolo_get_job")
@@ -913,6 +921,8 @@ def yolo_get_job(
         STATE_STORE,
         SSH_BY_ENV,
         NOTIFIER,
+        TRACKER,
+        NOTIFY_STORE,
         refresh=refresh,
         feishu_report_enable=SETTINGS.feishu_report_enable,
         feishu_report_every_n_epochs=SETTINGS.feishu_report_every_n_epochs,

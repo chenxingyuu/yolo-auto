@@ -31,6 +31,7 @@ class Settings:
     yolo_jobs_dir: str
     yolo_models_dir: str
     yolo_state_file: str
+    yolo_notify_state_file: str
     watch_poll_interval_seconds: int
     watch_lock_file: str
 
@@ -153,6 +154,7 @@ def load_settings() -> Settings:
         yolo_jobs_dir=_get_env("YOLO_JOBS_DIR", "/workspace/jobs"),
         yolo_models_dir=_get_env("YOLO_MODELS_DIR", "/workspace/models"),
         yolo_state_file=_get_env("YOLO_STATE_FILE", ".state/jobs.db"),
+        yolo_notify_state_file=_get_env("YOLO_NOTIFY_STATE_FILE", ".state/notify.db"),
         watch_poll_interval_seconds=max(
             5, int(_get_env("YOLO_WATCH_POLL_INTERVAL_SECONDS", "30"))
         ),
