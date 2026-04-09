@@ -18,6 +18,8 @@ RUN curl -fsSL "https://dl.min.io/client/mc/release/linux-amd64/mc" -o /usr/loca
 && chmod +x /usr/local/bin/mc \
 && mc --version
 
+RUN pip install mlflow -i https://mirrors.aliyun.com/pypi/simple
+
 ENV WORKDIR=/workspace/
 RUN mkdir -p ${WORKDIR} /workspace/datasets /workspace/jobs /workspace/models
 

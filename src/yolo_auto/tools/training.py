@@ -33,6 +33,7 @@ class TrainRequest:
     minio_export_zip: str | None = None
     dataset_slug: str | None = None
     dataset_version_note: str | None = None
+    confirm_continue_if_busy: bool = False
 
 
 def _resolve_remote_path(path: str, work_dir: str) -> str:
@@ -129,6 +130,32 @@ def _fourth_metric_for_start_card(extra_args: dict[str, Any] | None) -> tuple[st
     return "Patience", ""
 
 
+def _collect_remote_active_jobs(control_client: HttpControlClient, *, limit: int = 100) -> list[dict[str, str]]:
+    jobs_resp = control_client.list_jobs(limit=limit)
+    raw_jobs = jobs_resp.get("jobs")
+    if not isinstance(raw_jobs, list):
+        return []
+    active_jobs: list[dict[str, str]] = []
+    for item in raw_jobs:
+        if not isinstance(item, dict):
+            continue
+        job_id = str(item.get("jobId") or "").strip()
+        execution_id = str(item.get("executionId") or "").strip()
+        if not job_id:
+            continue
+        status_resp = control_client.get_training_status({"jobId": job_id, "pid": execution_id or None})
+        status = str(status_resp.get("status") or "").strip().lower()
+        if status == JobStatus.RUNNING.value:
+            active_jobs.append(
+                {
+                    "jobId": job_id,
+                    "executionId": execution_id,
+                    "status": status,
+                }
+            )
+    return active_jobs
+
+
 def start_training(
     req: TrainRequest,
     legacy_client: object | None,
@@ -185,6 +212,15 @@ def start_training(
                 retryable=False,
                 hint="请检查 YOLO_CONTROL_BASE_URL 配置",
                 payload={"jobId": req.job_id},
+            )
+        active_jobs = _collect_remote_active_jobs(control_client)
+        if active_jobs and not req.confirm_continue_if_busy:
+            return err(
+                error_code="ACTIVE_TRAINING_EXISTS",
+                message="发现当前容器存在训练中的任务，未确认前不启动新训练",
+                retryable=False,
+                hint="确认后请在 yolo_start_training 传入 confirmContinueIfBusy=true 以继续启动",
+                payload={"jobId": req.job_id, "activeJobs": active_jobs},
             )
         remote = control_client.start_training(
             {

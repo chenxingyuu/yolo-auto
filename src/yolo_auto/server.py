@@ -572,6 +572,18 @@ def yolo_start_training(
             description="可选。人工可读版本说明（如标注批次），写入血缘记录。",
         ),
     ] = None,
+    confirmContinueIfBusy: Annotated[
+        bool,
+        _camel_or_snake_field(
+            "confirmContinueIfBusy",
+            "confirm_continue_if_busy",
+            default=False,
+            description=(
+                "启动前若检测到容器内已有运行中的训练任务，"
+                "需显式设为 true 才继续启动。"
+            ),
+        ),
+    ] = False,
     extraArgs: Annotated[
         dict[str, Any] | None,
         _camel_or_snake_field(
@@ -668,6 +680,7 @@ def yolo_start_training(
         minio_export_zip=zip_p,
         dataset_slug=slug_p,
         dataset_version_note=note_p,
+        confirm_continue_if_busy=confirmContinueIfBusy,
     )
     return start_training(
         req,
