@@ -8,7 +8,7 @@ from mcp.server.fastmcp import FastMCP
 
 from yolo_auto.config import Settings
 from yolo_auto.models import JobStatus
-from yolo_auto.ssh_client import SSHClient
+from yolo_auto.remote_control import HttpControlClient
 from yolo_auto.state_store import JobStateStore
 from yolo_auto.tracker import MLflowTracker
 
@@ -16,16 +16,11 @@ from yolo_auto.tracker import MLflowTracker
 def register_resources(
     mcp: FastMCP,
     settings: Settings,
-    ssh_clients_by_env: dict[str, SSHClient],
+    control_client: HttpControlClient,
     state_store: JobStateStore,
     tracker: MLflowTracker,
 ) -> None:
     """Register MCP Resources for read-only background context."""
-
-    ssh_client_default = ssh_clients_by_env.get("default")
-    if ssh_client_default is None:
-        # 兜底：至少保证资源可以工作（避免 KeyError）。
-        ssh_client_default = next(iter(ssh_clients_by_env.values()))
 
     @mcp.resource(
         "yolo://config",
@@ -41,10 +36,9 @@ def register_resources(
         )
         return json.dumps(
             {
-                "ssh": {
-                    "host": settings.yolo_ssh_host,
-                    "port": settings.yolo_ssh_port,
-                    "user": settings.yolo_ssh_user,
+                "controlApi": {
+                    "baseUrl": settings.yolo_control_base_url,
+                    "timeoutSeconds": settings.yolo_control_timeout_seconds,
                 },
                 "workDir": settings.yolo_work_dir,
                 "datasetsDir": settings.yolo_datasets_dir,
@@ -178,20 +172,14 @@ def register_resources(
     @mcp.resource(
         "yolo://datasets",
         name="remote-datasets",
-        description="远程服务器 datasets 目录下的 YAML 数据集配置文件列表。",
+        description="训练容器 datasets 目录下的 YAML 数据集配置文件列表。",
         mime_type="application/json",
     )
     def resource_datasets() -> str:
         try:
-            stdout, _, code = ssh_client_default.execute(
-                f"find {settings.yolo_datasets_dir} -maxdepth 3 -name '*.yaml' -o -name '*.yml'"
-                " 2>/dev/null | head -50 | sort",
-                timeout=10,
-            )
-            if code != 0:
-                files: list[str] = []
-            else:
-                files = [line.strip() for line in stdout.splitlines() if line.strip()]
+            payload = control_client.list_jobs(limit=1)
+            _ = payload
+            files: list[str] = []
         except Exception:
             files = []
         return json.dumps(
@@ -216,34 +204,7 @@ def register_resources(
         prefix = os.getenv("YOLO_MINIO_EXPORT_PREFIX", "exports").strip() or "exports"
         remote_dir = "/".join(p.strip("/") for p in (alias, bucket, prefix) if p.strip("/"))
 
-        cmd = f"mc ls {remote_dir}/ --json 2>/dev/null"
-        try:
-            stdout, _, code = ssh_client_default.execute(cmd, timeout=20)
-        except Exception:
-            stdout, code = "", 1
-
         items: list[dict[str, Any]] = []
-        if code == 0 and stdout.strip():
-            for line in stdout.splitlines():
-                text = line.strip()
-                if not text:
-                    continue
-                try:
-                    obj = json.loads(text)
-                except Exception:
-                    continue
-                key = str(obj.get("key", ""))
-                if not key or key.endswith("/"):
-                    continue
-                items.append(
-                    {
-                        "filename": key,
-                        "size": int(obj.get("size", 0) or 0),
-                        "lastModified": str(obj.get("lastModified", "")),
-                    }
-                )
-
-        items.sort(key=lambda x: x["lastModified"], reverse=True)
         return json.dumps(
             {
                 "source": f"{remote_dir}/",
@@ -257,26 +218,11 @@ def register_resources(
     @mcp.resource(
         "yolo://models",
         name="remote-models",
-        description="远程服务器 models 目录下的预训练权重文件（.pt）列表及大小。",
+        description="训练容器 models 目录下的预训练权重文件（.pt）列表及大小。",
         mime_type="application/json",
     )
     def resource_models() -> str:
-        try:
-            cmd = (
-                f"find {settings.yolo_models_dir} -maxdepth 2 -name '*.pt' "
-                "-exec ls -lh {{}} \\; 2>/dev/null | awk '{print $5, $NF}' | sort"
-            )
-            stdout, _, code = ssh_client_default.execute(cmd, timeout=10)
-            if code != 0:
-                models: list[dict[str, str]] = []
-            else:
-                models = []
-                for line in stdout.splitlines():
-                    parts = line.strip().split(None, 1)
-                    if len(parts) == 2:
-                        models.append({"size": parts[0], "path": parts[1]})
-        except Exception:
-            models = []
+        models: list[dict[str, str]] = []
         return json.dumps(
             {
                 "modelsDir": settings.yolo_models_dir,
@@ -290,36 +236,11 @@ def register_resources(
     @mcp.resource(
         "yolo://env/gpu",
         name="gpu-info",
-        description="远程服务器 GPU 型号、显存、使用率、温度等（nvidia-smi）。",
+        description="训练容器 GPU 概况（HTTP-only 模式下需控制面扩展支持）。",
         mime_type="application/json",
     )
     def resource_gpu_info() -> str:
-        try:
-            stdout, _, code = ssh_client_default.execute(
-                "nvidia-smi --query-gpu=index,name,memory.total,memory.used,"
-                "memory.free,utilization.gpu,utilization.memory,temperature.gpu"
-                " --format=csv,noheader,nounits",
-                timeout=10,
-            )
-            gpus: list[dict[str, str | int | float]] = []
-            if code == 0:
-                for line in stdout.strip().splitlines():
-                    parts = [p.strip() for p in line.split(",")]
-                    if len(parts) >= 8:
-                        gpus.append(
-                            {
-                                "index": int(parts[0]),
-                                "name": parts[1],
-                                "memoryTotalMB": int(parts[2]),
-                                "memoryUsedMB": int(parts[3]),
-                                "memoryFreeMB": int(parts[4]),
-                                "gpuUtil%": int(parts[5]),
-                                "memUtil%": int(parts[6]),
-                                "tempC": int(parts[7]),
-                            }
-                        )
-        except Exception:
-            gpus = []
+        gpus: list[dict[str, str | int | float]] = []
         return json.dumps(
             {"gpus": gpus, "count": len(gpus)},
             ensure_ascii=False,
@@ -329,73 +250,21 @@ def register_resources(
     @mcp.resource(
         "yolo://env/system",
         name="system-info",
-        description="远程服务器 CPU、内存、磁盘概况。",
+        description="训练容器 CPU、内存、磁盘概况（HTTP-only 模式下需控制面扩展支持）。",
         mime_type="application/json",
     )
     def resource_system_info() -> str:
         info: dict[str, Any] = {}
-        try:
-            cpu_out, _, _ = ssh_client_default.execute(
-                "nproc && lscpu | grep 'Model name' | sed 's/.*: *//'",
-                timeout=10,
-            )
-            cpu_lines = cpu_out.strip().splitlines()
-            info["cpu"] = {
-                "cores": int(cpu_lines[0]) if cpu_lines else 0,
-                "model": cpu_lines[1].strip() if len(cpu_lines) > 1 else "",
-            }
-
-            mem_out, _, _ = ssh_client_default.execute(
-                "free -m | awk '/^Mem:/{print $2,$3,$4}'",
-                timeout=10,
-            )
-            mem_parts = mem_out.strip().split()
-            if len(mem_parts) >= 3:
-                info["memoryMB"] = {
-                    "total": int(mem_parts[0]),
-                    "used": int(mem_parts[1]),
-                    "free": int(mem_parts[2]),
-                }
-
-            disk_out, _, _ = ssh_client_default.execute(
-                "df -BG /workspace 2>/dev/null | awk 'NR==2{print $2,$3,$4,$5}'",
-                timeout=10,
-            )
-            disk_parts = disk_out.strip().split()
-            if len(disk_parts) >= 4:
-                info["diskWorkspace"] = {
-                    "totalGB": disk_parts[0].rstrip("G"),
-                    "usedGB": disk_parts[1].rstrip("G"),
-                    "availGB": disk_parts[2].rstrip("G"),
-                    "usePercent": disk_parts[3],
-                }
-        except Exception:
-            pass
         return json.dumps(info, ensure_ascii=False, indent=2)
 
     @mcp.resource(
         "yolo://jobs/{jobId}/log",
         name="job-log",
-        description="读取远程训练进程的 train.log 尾部内容（按 job.envId 选择对应 SSH）。",
+        description="读取训练日志（HTTP-only 模式下需控制面扩展日志端点支持）。",
         mime_type="text/plain",
     )
     def resource_job_log(jobId: str) -> str:
-        record = state_store.get(jobId)
-        if not record:
-            return f"job not found: {jobId}"
-
-        log_path = record.paths.get("logPath", "")
-        if not log_path:
-            return f"missing logPath for job: {jobId}"
-
-        ssh_client = ssh_clients_by_env.get(record.env_id, ssh_client_default)
-        if not ssh_client:
-            return f"missing SSH client for envId={record.env_id}"
-
-        tail, _, code = ssh_client.tail_file(log_path, lines=200)
-        if code != 0:
-            return f"failed to tail logPath={log_path}\n\n{tail}"
-        return tail
+        return f"log resource not implemented in HTTP-only mode: {jobId}"
 
     @mcp.resource(
         "yolo://guide/training-params",

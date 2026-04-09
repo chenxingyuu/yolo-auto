@@ -46,6 +46,24 @@ class HttpControlClient:
     def run_validation(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request("POST", "/api/v1/validate/run", json=payload)
 
+    def setup_env(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", "/api/v1/env/setup", json=payload)
+
+    def check_dataset(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", "/api/v1/dataset/check", json=payload)
+
+    def fix_dataset(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", "/api/v1/dataset/fix", json=payload)
+
+    def sync_dataset(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", "/api/v1/dataset/sync", json=payload)
+
+    def run_export(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", "/api/v1/export/run", json=payload)
+
+    def auto_tune(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", "/api/v1/tune/auto", json=payload)
+
     def get_job(self, job_id: str) -> dict[str, Any]:
         return self._request("GET", f"/api/v1/jobs/{job_id}")
 

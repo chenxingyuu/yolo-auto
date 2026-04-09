@@ -20,10 +20,6 @@ from __future__ import annotations
 # - `FEISHU_WEBHOOK_URL`：飞书机器人 Webhook
 # - `FEISHU_REPORT_ENABLE` / `FEISHU_REPORT_EVERY_N_EPOCHS`：是否启用里程碑推送与推送频率
 # - `YOLO_PRIMARY_METRIC`：主指标名（写入里程碑文案）
-# SSH 连接配置：
-# - 优先使用 `YOLO_SSH_ENVS`（JSON 对象，支持为不同 `env_id` 配置不同主机）
-# - 或回退使用 `YOLO_SSH_HOST` / `YOLO_SSH_PORT` / `YOLO_SSH_USER`
-#   / `YOLO_SSH_KEY_PATH`（作为 `default` 环境）
 import fcntl
 import logging
 import time
@@ -33,7 +29,7 @@ from types import TracebackType
 from yolo_auto.config import load_settings
 from yolo_auto.feishu import FeishuNotifier
 from yolo_auto.models import JobStatus
-from yolo_auto.ssh_client import SSHClient, SSHConfig
+from yolo_auto.remote_control import HttpControlClient, RemoteControlConfig
 from yolo_auto.state_store import JobStateStore
 from yolo_auto.tools.status import get_status
 
@@ -89,25 +85,13 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s - %(message)s",
     )
     settings = load_settings()
-    ssh_by_env: dict[str, SSHClient] = {}
-    for env_id, ssh_env in settings.yolo_ssh_envs.items():
-        ssh_by_env[env_id] = SSHClient(
-            SSHConfig(
-                host=ssh_env.host,
-                port=ssh_env.port,
-                user=ssh_env.user,
-                key_path=ssh_env.key_path,
-            )
+    control_client = HttpControlClient(
+        RemoteControlConfig(
+            base_url=settings.yolo_control_base_url,
+            bearer_token=settings.yolo_control_bearer_token,
+            timeout_seconds=settings.yolo_control_timeout_seconds,
         )
-        logger.info(
-            "ssh env registered env_id=%r host=%s port=%s user=%s key=%s",
-            env_id,
-            ssh_env.host,
-            ssh_env.port,
-            ssh_env.user,
-            ssh_env.key_path,
-        )
-    ssh_default = ssh_by_env["default"]
+    )
     notifier = FeishuNotifier(
         webhook_url=settings.feishu_webhook_url,
         app_id=settings.feishu_app_id,
@@ -159,27 +143,18 @@ def main() -> None:
                     "poll #%s refreshing %s RUNNING job(s): %s",
                     poll_seq,
                     len(running_jobs),
-                    [(j.job_id, j.env_id or "default") for j in running_jobs],
+                    [j.job_id for j in running_jobs],
                 )
             for job in jobs:
                 if job.status != JobStatus.RUNNING:
                     continue
-                ssh_client = ssh_by_env.get(job.env_id, ssh_default)
-                ssh_label = job.env_id if job.env_id in ssh_by_env else "default"
-                if job.env_id and job.env_id not in ssh_by_env:
-                    logger.warning(
-                        "job_id=%s env_id=%r not in ssh map; using default SSH client",
-                        job.job_id,
-                        job.env_id,
-                    )
                 logger.info(
-                    "get_status begin poll=#%s job_id=%s run_id=%s env_id=%r ssh=%s "
+                    "get_status begin poll=#%s job_id=%s run_id=%s env_id=%r "
                     "pid=%s metricsPath=%s",
                     poll_seq,
                     job.job_id,
                     job.run_id,
                     job.env_id,
-                    ssh_label,
                     job.pid,
                     (job.paths.get("metricsPath") or "").strip() or "(missing)",
                 )
@@ -189,13 +164,14 @@ def main() -> None:
                         job.job_id,
                         job.run_id,
                         store,
-                        ssh_client,
+                        None,
                         notifier,
                         feishu_report_enable=settings.feishu_report_enable,
                         feishu_report_every_n_epochs=settings.feishu_report_every_n_epochs,
                         primary_metric_key=settings.primary_metric_key,
                         feishu_card_img_key=settings.feishu_card_img_key,
                         feishu_card_fallback_img_key=settings.feishu_card_fallback_img_key,
+                        control_client=control_client,
                     )
                     elapsed_ms = int((time.monotonic() - t0) * 1000)
                     if not bool(result.get("ok", True)):

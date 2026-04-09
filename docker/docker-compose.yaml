@@ -7,7 +7,6 @@ services:
     container_name: yolo-auto
     restart: unless-stopped
     ports:
-      - "2222:2222"
       - "18080:18080"
     environment:
       # MLflow tracking backend used by yolo-auto
@@ -19,5 +18,4 @@ services:
       - /data/yolo-datasets:/workspace/datasets
       - /data/yolo-jobs:/workspace/jobs
       - /data/yolo-models:/workspace/models
-      - /root/.ssh/authorized_keys:/root/.ssh/authorized_keys:ro
       - ./mc-config.json:/root/.mc/config.json:ro

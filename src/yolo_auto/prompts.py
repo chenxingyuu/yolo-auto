@@ -166,7 +166,7 @@ def register_prompts(mcp: FastMCP) -> None:
             f"1. 调用 yolo_get_job（jobId=\"{job_id}\", refresh=true）获取最新状态与指标\n"
             f"2. 根据状态判断：\n"
             f"   - running 但长时间无新 epoch → 是否卡住（GPU 挂起/OOM 后静默失败）\n"
-            f"   - failed → 分析错误（OOM、数据路径、SSH 断连、磁盘满）\n"
+            f"   - failed → 分析错误（OOM、数据路径、控制面调用失败、磁盘满）\n"
             f"   - completed 但指标差 → 欠拟合（epoch 不够/lr 太小）或过拟合（train↑ val↓）\n"
             f"3. 给出诊断结论和修复方案\n"
             f"4. 如果需要重跑，直接给出调整后的推荐参数\n"

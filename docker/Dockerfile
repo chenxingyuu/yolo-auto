@@ -10,7 +10,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
-    openssh-server \
     vim \
     && rm -rf /var/lib/apt/lists/*
 
@@ -19,40 +18,21 @@ RUN curl -fsSL "https://dl.min.io/client/mc/release/linux-amd64/mc" -o /usr/loca
 && chmod +x /usr/local/bin/mc \
 && mc --version
 
-RUN mkdir -p /var/run/sshd
-
 ENV WORKDIR=/workspace/
 RUN mkdir -p ${WORKDIR} /workspace/datasets /workspace/jobs /workspace/models
 
 WORKDIR ${WORKDIR}
 
-RUN cd /workspace/models \
-    && python -c "from ultralytics import YOLO; \
-models = [ \
-    'yolov5n.pt','yolov5s.pt','yolov5m.pt','yolov5l.pt','yolov5x.pt', \
-    'yolov8n.pt','yolov8s.pt','yolov8m.pt','yolov8l.pt','yolov8x.pt', \
-    'yolo11n.pt','yolo11s.pt','yolo11m.pt','yolo11l.pt','yolo11x.pt', \
-    'yolo26n.pt','yolo26s.pt','yolo26m.pt','yolo26l.pt','yolo26x.pt', \
-]; [(YOLO(m), print(f'OK: {m}')) for m in models]"
-
 # 将训练控制面代码放入训练工作区目录
 RUN mkdir -p /workspace/yolo-auto-control
+RUN cd /workspace/yolo-auto-control && uv init && uv add fastapi uvicorn pydantic pyyaml -i https://mirrors.aliyun.com/pypi/simple
 COPY src/yolo_auto/control_api.py /workspace/yolo-auto-control/control_api.py
 
-# SSH 配置：禁用密码登录，只允许公钥，允许 root 公钥登录
-RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config && \
-    sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config && \
-    sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin without-password/' /etc/ssh/sshd_config && \
-    mkdir -p /root/.ssh && \
-    chmod 700 /root/.ssh && \
-    touch /root/.ssh/authorized_keys && \
-    chmod 600 /root/.ssh/authorized_keys
-
-EXPOSE 2222 18080
+EXPOSE 18080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD bash -c 'echo > /dev/tcp/127.0.0.1/2222 && echo > /dev/tcp/127.0.0.1/18080' || exit 1
+    CMD bash -c 'echo > /dev/tcp/127.0.0.1/18080' || exit 1
 
 USER root
 
-CMD ["bash", "-lc", "uvicorn --app-dir /workspace/yolo-auto-control control_api:app --host 0.0.0.0 --port 18080 & exec /usr/sbin/sshd -D -p 2222"]
+CMD ["/workspace/yolo-auto-control/.venv/bin/uvicorn", "--app-dir", "/workspace/yolo-auto-control", "control_api:app", "--host", "0.0.0.0", "--port", "18080"]

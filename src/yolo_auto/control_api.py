@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import itertools
 import os
 import re
 import shlex
@@ -12,6 +13,7 @@ from threading import Lock
 from typing import Any
 
 import uvicorn
+import yaml
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
@@ -88,6 +90,59 @@ class ValidateRequest(BaseModel):
     skipPerImageQc: bool = False
 
 
+class SetupEnvRequest(BaseModel):
+    model: str
+    dataConfigPath: str
+    workDir: str = "/workspace"
+    modelsDir: str = "/workspace/models"
+
+
+class DatasetCheckRequest(BaseModel):
+    dataConfigPath: str
+    workDir: str = "/workspace"
+
+
+class DatasetFixRequest(BaseModel):
+    dataConfigPath: str
+    dryRun: bool = True
+    apply: bool = False
+
+
+class DatasetSyncRequest(BaseModel):
+    filename: str
+    datasetName: str
+    minioAlias: str = "minio"
+    minioBucket: str = "cvat-export"
+    minioPrefix: str = "exports"
+    datasetsDir: str = "/workspace/datasets"
+
+
+class ExportRequest(BaseModel):
+    bestPath: str
+    jobsDir: str
+    workDir: str
+    jobId: str
+    formats: list[str] | None = None
+    imgSize: int | None = None
+    half: bool | None = None
+    int8: bool | None = None
+    device: str | None = None
+    extraArgs: dict[str, Any] | None = None
+
+
+class AutoTuneRequest(BaseModel):
+    baseJobId: str
+    model: str
+    dataConfigPath: str
+    epochs: int
+    maxTrials: int
+    searchSpace: dict[str, list[float | int]]
+    workDir: str
+    jobsDir: str
+    trialTimeoutSeconds: int = 1800
+    pollIntervalSeconds: int = 10
+
+
 _ALL_LINE_RE = re.compile(
     r"^\s*all\s+\d+\s+\d+\s+([0-9]*\.?[0-9]+)\s+([0-9]*\.?[0-9]+)\s+([0-9]*\.?[0-9]+)\s+([0-9]*\.?[0-9]+)\s*$",
     re.MULTILINE,
@@ -109,6 +164,18 @@ def _parse_val_stdout(stdout: str) -> dict[str, float] | None:
 app = FastAPI(title="yolo-control-api", version="1.0.0")
 _job_pid: dict[str, int] = {}
 _lock = Lock()
+
+
+def _run_bash(cmd: str, *, timeout: int = 300) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(  # noqa: S603
+        ["bash", "-lc", cmd],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        check=False,
+    )
 
 
 @app.get("/health")
@@ -288,6 +355,201 @@ def validate_run(req: ValidateRequest) -> dict[str, Any]:
         "qcPreviewLines": [],
         "qcLineCount": None,
         "qcSkipped": req.skipPerImageQc,
+    }
+
+
+@app.post("/api/v1/env/setup", dependencies=[Depends(_token_guard)])
+def env_setup(req: SetupEnvRequest) -> dict[str, Any]:
+    model_path = req.model if req.model.startswith("/") else os.path.join(req.workDir, req.model)
+    data_path = (
+        req.dataConfigPath
+        if req.dataConfigPath.startswith("/")
+        else os.path.join(req.workDir, req.dataConfigPath)
+    )
+    return {
+        "workDirExists": os.path.isdir(req.workDir),
+        "modelsDirExists": os.path.isdir(req.modelsDir),
+        "modelExists": os.path.isfile(model_path),
+        "dataConfigExists": os.path.isfile(data_path),
+        "resolved": {"modelPath": model_path, "dataConfigPath": data_path},
+    }
+
+
+@app.post("/api/v1/dataset/check", dependencies=[Depends(_token_guard)])
+def dataset_check(req: DatasetCheckRequest) -> dict[str, Any]:
+    data_path = (
+        req.dataConfigPath
+        if req.dataConfigPath.startswith("/")
+        else os.path.join(req.workDir, req.dataConfigPath)
+    )
+    if not os.path.isfile(data_path):
+        raise HTTPException(status_code=400, detail=f"dataset yaml not found: {data_path}")
+    with open(data_path, encoding="utf-8") as fp:
+        cfg = yaml.safe_load(fp) or {}
+    base = cfg.get("path", os.path.dirname(data_path))
+    if not str(base).startswith("/"):
+        base = os.path.normpath(os.path.join(os.path.dirname(data_path), str(base)))
+    train_rel = str(cfg.get("train", "")).strip()
+    val_rel = str(cfg.get("val", "")).strip()
+    train_dir = train_rel if train_rel.startswith("/") else os.path.join(base, train_rel)
+    val_dir = val_rel if val_rel.startswith("/") else os.path.join(base, val_rel)
+    return {
+        "ok": bool(train_rel and val_rel and os.path.exists(train_dir) and os.path.exists(val_dir)),
+        "datasetRoot": base,
+        "trainPath": train_dir,
+        "valPath": val_dir,
+        "trainExists": os.path.exists(train_dir),
+        "valExists": os.path.exists(val_dir),
+    }
+
+
+@app.post("/api/v1/dataset/fix", dependencies=[Depends(_token_guard)])
+def dataset_fix(req: DatasetFixRequest) -> dict[str, Any]:
+    if req.apply and req.dryRun:
+        raise HTTPException(status_code=400, detail="apply=true requires dryRun=false")
+    return {
+        "ok": True,
+        "dryRun": req.dryRun,
+        "apply": req.apply,
+        "message": "HTTP 控制面当前提供保守 no-op 修复；建议先人工核验后再训练",
+        "plannedChanges": [],
+    }
+
+
+@app.post("/api/v1/dataset/sync", dependencies=[Depends(_token_guard)])
+def dataset_sync(req: DatasetSyncRequest) -> dict[str, Any]:
+    src = "/".join(
+        s.strip("/") for s in (req.minioAlias, req.minioBucket, req.minioPrefix, req.filename) if s
+    )
+    target_dir = os.path.join(req.datasetsDir, req.datasetName)
+    os.makedirs(target_dir, exist_ok=True)
+    tmp_zip = os.path.join("/tmp", f"{req.datasetName}.zip")
+    cp_cmd = f"mc cp {shlex.quote(src)} {shlex.quote(tmp_zip)}"
+    cp_res = _run_bash(cp_cmd, timeout=600)
+    if cp_res.returncode != 0:
+        raise HTTPException(status_code=400, detail=cp_res.stderr.strip() or cp_res.stdout.strip())
+    unzip_cmd = f"unzip -o {shlex.quote(tmp_zip)} -d {shlex.quote(target_dir)}"
+    unzip_res = _run_bash(unzip_cmd, timeout=600)
+    if unzip_res.returncode != 0:
+        raise HTTPException(
+            status_code=400, detail=unzip_res.stderr.strip() or unzip_res.stdout.strip()
+        )
+    data_yaml = ""
+    for root, _dirs, files in os.walk(target_dir):
+        for f in files:
+            if f.endswith(".yaml") or f.endswith(".yml"):
+                data_yaml = os.path.join(root, f)
+                break
+        if data_yaml:
+            break
+    return {
+        "ok": True,
+        "datasetDir": target_dir,
+        "dataConfigPath": data_yaml,
+        "provenance": {"objectName": req.filename},
+    }
+
+
+@app.post("/api/v1/export/run", dependencies=[Depends(_token_guard)])
+def export_run(req: ExportRequest) -> dict[str, Any]:
+    if not os.path.isfile(req.bestPath):
+        raise HTTPException(status_code=400, detail=f"best model not found: {req.bestPath}")
+    formats = req.formats or ["onnx", "engine", "coreml"]
+    artifacts: list[dict[str, str]] = []
+    for fmt in formats:
+        parts = [
+            f"cd {shlex.quote(req.workDir)}",
+            "&&",
+            "yolo export",
+            f"model={shlex.quote(req.bestPath)}",
+            f"format={shlex.quote(fmt)}",
+        ]
+        if req.imgSize is not None:
+            parts.append(f"imgsz={req.imgSize}")
+        if req.half is not None:
+            parts.append(f"half={_format_yolo_value(req.half)}")
+        if req.int8 is not None:
+            parts.append(f"int8={_format_yolo_value(req.int8)}")
+        if req.device is not None:
+            parts.append(f"device={shlex.quote(req.device)}")
+        extra_cli = _build_extra_cli_args(req.extraArgs)
+        if extra_cli:
+            parts.append(extra_cli)
+        proc = _run_bash(" ".join(parts), timeout=1800)
+        if proc.returncode != 0:
+            raise HTTPException(status_code=400, detail=proc.stderr.strip() or proc.stdout.strip())
+    job_dir = os.path.join(req.jobsDir, req.jobId)
+    for root, _dirs, files in os.walk(job_dir):
+        for f in files:
+            if any(f.endswith(ext) for ext in (".onnx", ".engine", ".mlmodel", ".pt")):
+                artifacts.append({"path": os.path.join(root, f)})
+    return {"ok": True, "jobId": req.jobId, "artifacts": artifacts}
+
+
+@app.post("/api/v1/tune/auto", dependencies=[Depends(_token_guard)])
+def tune_auto(req: AutoTuneRequest) -> dict[str, Any]:
+    lrs = req.searchSpace.get("learningRate", [0.01])
+    batches = req.searchSpace.get("batch", [16])
+    imgs = req.searchSpace.get("imgSize", [640])
+    grid = list(itertools.product(lrs, batches, imgs))[: req.maxTrials]
+    trials: list[dict[str, Any]] = []
+    for idx, (lr, bs, img) in enumerate(grid, start=1):
+        job_id = f"{req.baseJobId}-t{idx}"
+        start_resp = train_start(
+            TrainStartRequest(
+                jobId=job_id,
+                runName=job_id,
+                modelPath=req.model,
+                dataPath=req.dataConfigPath,
+                project=req.jobsDir,
+                name=job_id,
+                device=0,
+                epochs=req.epochs,
+                imgsz=int(img),
+                batch=float(bs),
+                extraArgs={"lr0": float(lr)},
+                workDir=req.workDir,
+                mlflowTrackingUri=os.getenv("MLFLOW_TRACKING_URI", ""),
+                mlflowExperimentName=os.getenv("MLFLOW_EXPERIMENT_NAME", "yolo-auto"),
+            )
+        )
+        pid = str(start_resp.get("pid", ""))
+        deadline = time.time() + req.trialTimeoutSeconds
+        latest = {"status": "running", "metrics": {}}
+        while time.time() <= deadline:
+            latest = train_status(
+                jobId=job_id,
+                pid=pid,
+                metricsPath=start_resp["paths"]["metricsPath"],
+                logPath=start_resp["paths"]["logPath"],
+                totalEpochs=req.epochs,
+                createdAt=int(time.time()),
+            )
+            if latest["status"] in {"completed", "failed", "stopped"}:
+                break
+            time.sleep(req.pollIntervalSeconds)
+        metric = float((latest.get("metrics") or {}).get("map5095") or 0.0)
+        trials.append(
+            {
+                "jobId": job_id,
+                "runId": job_id,
+                "params": {"learningRate": lr, "batch": bs, "imgSize": img},
+                "metric": metric,
+                "status": latest.get("status", "failed"),
+                "error": None,
+            }
+        )
+    succeeded = [t for t in trials if t["status"] == "completed"]
+    if not succeeded:
+        raise HTTPException(status_code=400, detail="all tuning trials failed")
+    best = max(succeeded, key=lambda x: float(x["metric"]))
+    return {
+        "envId": "default",
+        "baseJobId": req.baseJobId,
+        "bestJobId": best["jobId"],
+        "bestMetrics": {"map5095": best["metric"]},
+        "bestParams": best["params"],
+        "trials": trials,
     }
 
 
