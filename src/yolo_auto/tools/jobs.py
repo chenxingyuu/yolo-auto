@@ -1,19 +1,14 @@
 from __future__ import annotations
 
 import csv
-import shlex
-import time
 from io import StringIO
 from typing import Any
 
-import yaml
-
 from yolo_auto.errors import err, ok
 from yolo_auto.feishu import FeishuNotifier
-from yolo_auto.models import JobRecord, JobStatus
+from yolo_auto.models import JobStatus
 from yolo_auto.notifier_state_store import NotifierStateStore
 from yolo_auto.remote_control import HttpControlClient
-from yolo_auto.ssh_client import SSHClient
 from yolo_auto.state_store import JobStateStore
 from yolo_auto.tools.metrics_csv import parse_training_row
 from yolo_auto.tools.status import get_status
@@ -41,32 +36,16 @@ def _job_id_from_mlflow_run(run_name: str | None, tags: dict[str, Any] | None) -
     return rn
 
 
-def _ssh_for_record(
-    record: JobRecord,
-    ssh_clients_by_env: dict[str, SSHClient],
-    *,
-    default_env_id: str = "default",
-) -> SSHClient:
-    ssh = ssh_clients_by_env.get(record.env_id)
-    if ssh:
-        return ssh
-    # 回退到 default；保证旧数据或未知 envId 不会导致整个请求失败。
-    return ssh_clients_by_env[default_env_id]
-
-
-def _epoch_hint(record: JobRecord, ssh_clients_by_env: dict[str, SSHClient]) -> dict[str, Any]:
+def _epoch_hint(record) -> dict[str, Any]:
     path = record.paths.get("metricsPath", "")
     if not path:
         return {}
-    if not ssh_clients_by_env or "default" not in ssh_clients_by_env:
-        return {}
-    ssh_client = _ssh_for_record(record, ssh_clients_by_env)
     try:
-        content, _, code = ssh_client.execute(f"cat {path}")
+        with open(path, encoding="utf-8", errors="replace") as fp:
+            content = fp.read()
     except Exception:
-        # list_jobs 是轻量查看接口：SSH 不可用时也应尽量返回本地状态。
         return {}
-    if code != 0 or not content.strip():
+    if not content.strip():
         return {}
     rows = list(csv.DictReader(StringIO(content)))
     if not rows:
@@ -77,7 +56,7 @@ def _epoch_hint(record: JobRecord, ssh_clients_by_env: dict[str, SSHClient]) -> 
 
 def list_jobs(
     state_store: JobStateStore,
-    ssh_clients_by_env: dict[str, SSHClient] | None,
+    legacy_clients_by_env: dict[str, Any] | None,
     tracker: MLflowTracker | None = None,
     limit: int = 20,
     control_client: HttpControlClient | None = None,
@@ -118,7 +97,8 @@ def list_jobs(
     records = state_store.list_all()[:capped]
     items: list[dict[str, Any]] = []
     for record in records:
-        hint = _epoch_hint(record, ssh_clients_by_env or {})
+        _ = legacy_clients_by_env
+        hint = _epoch_hint(record)
         merged = record.to_dict()
         merged["epochHint"] = hint.get("epoch")
         items.append(merged)
@@ -128,7 +108,7 @@ def list_jobs(
 def get_job(
     job_id: str,
     state_store: JobStateStore,
-    ssh_clients_by_env: dict[str, SSHClient] | None,
+    legacy_clients_by_env: dict[str, Any] | None,
     notifier: FeishuNotifier,
     tracker: MLflowTracker | None = None,
     notifier_store: NotifierStateStore | None = None,
@@ -178,20 +158,17 @@ def get_job(
                 message=f"job not found in local state: {job_id}",
                 retryable=False,
                 hint=(
-                    "refresh 需要本地状态（用于 SSH/pid/paths）；"
+                    "refresh 需要本地状态（用于 pid/paths）；"
                     "可先调用 yolo_start_training 创建任务"
                 ),
                 payload={"jobId": job_id},
             )
-        if ssh_clients_by_env and "default" in ssh_clients_by_env:
-            ssh_client = _ssh_for_record(record, ssh_clients_by_env)
-        else:
-            ssh_client = None
+        _ = legacy_clients_by_env
         status_payload = get_status(
             job_id,
             record.run_id,
             state_store,
-            ssh_client,
+            None,
             notifier,
             tracker=tracker,
             notifier_store=notifier_store,
@@ -205,41 +182,6 @@ def get_job(
         payload["liveStatus"] = status_payload
         refreshed = state_store.get(job_id) or record
         payload["record"] = refreshed.to_dict()
-        job_dir = refreshed.paths.get("jobDir", "").strip()
-        if job_dir and ssh_client is not None:
-            args_path = f"{job_dir.rstrip('/')}/args.yaml"
-            try:
-                stdout, _, code = ssh_client.execute(f"cat {shlex.quote(args_path)}")
-            except Exception:
-                stdout, code = "", 1
-            if code == 0 and stdout.strip():
-                try:
-                    parsed = yaml.safe_load(stdout)
-                except Exception:
-                    parsed = None
-                if isinstance(parsed, dict):
-                    parsed_dict = dict(parsed)
-                    if refreshed.train_params != parsed_dict:
-                        now = int(time.time())
-                        updated = JobRecord(
-                            job_id=refreshed.job_id,
-                            run_id=refreshed.run_id,
-                            status=refreshed.status,
-                            pid=refreshed.pid,
-                            paths=refreshed.paths,
-                            created_at=refreshed.created_at,
-                            updated_at=now,
-                            env_id=refreshed.env_id,
-                            last_notified_state=refreshed.last_notified_state,
-                            feishu_message_id=refreshed.feishu_message_id,
-                            train_params=parsed_dict,
-                            last_metrics_at=refreshed.last_metrics_at,
-                            train_epochs=refreshed.train_epochs,
-                            last_reported_epoch=refreshed.last_reported_epoch,
-                            dataset_provenance=refreshed.dataset_provenance,
-                        )
-                        state_store.upsert(updated)
-                        payload["record"] = updated.to_dict()
     return ok(payload)
 
 

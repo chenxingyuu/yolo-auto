@@ -6,7 +6,7 @@ alwaysApply: false
 
 # YOLO Auto MCP 使用指南
 
-本项目是一个 MCP Server（`user-yolo-auto`），用于通过 SSH 在远程 GPU 容器上编排 YOLO 目标检测训练。
+本项目是一个 MCP Server（`user-yolo-auto`），用于通过 HTTP 控制面在训练容器上编排 YOLO 目标检测训练。
 
 ## 核心原则
 
@@ -20,21 +20,21 @@ alwaysApply: false
 
 2. **通过 `CallMcpTool` 调用工具**：所有训练操作使用 `user-yolo-auto` 服务器的工具：
    - `yolo_setup_env` — 环境检查
-   - `yolo_sync_dataset` — MinIO zip → 远程解压；响应含 `provenance`，可与下一步训练的 **可选血缘参数** 对齐
+  - `yolo_sync_dataset` — MinIO zip → 训练容器内解压；响应含 `provenance`，可与下一步训练的 **可选血缘参数** 对齐
    - `yolo_start_training` — 启动训练（可选 `minioExportZip`、`datasetSlug`、`datasetVersionNote` 写入血缘）
    - `yolo_get_status` — 查询进度
    - `yolo_stop_training` — 停止训练
    - `yolo_list_jobs` — 列出任务
    - `yolo_get_job` — 查询单任务
    - `yolo_validate` — 运行验证
-   - `yolo_export` — 导出模型（成功时远程 job 目录写 `export-manifest.json`）
+  - `yolo_export` — 导出模型（成功时训练目录写导出产物）
    - `yolo_auto_tune` — 自动调参
 
 3. **标准工作流**：`setup_env` → `start_training` → 周期 `get_status` → 完成后 `validate` / `export`
 
 4. **关键约定**：
-   - 远程路径：数据集在 `/workspace/datasets/`，模型在 `/workspace/models/`
+   - 训练容器路径：数据集在 `/workspace/datasets/`，模型在 `/workspace/models/`
    - `get_status` 和 `stop_training` 需要 `jobId` + `runId`（从 `start_training` 返回值获取）
    - 启动训练前必须先调用 `setup_env` 验证环境
    - 调用 `yolo_start_training` 时，工具参数 JSON 须与 schema 一致；优先使用 **camelCase**（如 `dataConfigPath`、`imgSize`）。服务端亦接受常见 **snake_case**（如 `data_config_path`、`img_size`）。勿传空对象 `{}`。修改 MCP 服务端代码后需 **重载 MCP** 再试。
-   - `yolo_get_status` 在遇到 SSH 连接/认证/超时等问题时返回结构化 `errorCode`（如 `SSH_TIMEOUT`、`SSH_AUTH_FAILED`）与 `retryable`，而非未分类异常字符串。
+   - `yolo_get_status` 在遇到 HTTP 控制面连接/鉴权/超时等问题时返回结构化 `errorCode`（如 `REMOTE_TIMEOUT`、`REMOTE_UNAUTHORIZED`）与 `retryable`，而非未分类异常字符串。

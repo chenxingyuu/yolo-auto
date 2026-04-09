@@ -152,7 +152,7 @@ def yolo_check_dataset(
         str,
         Field(
             default="default",
-            description="训练运行环境 ID；用于选择对应 SSH（来自 YOLO_SSH_ENVS）。",
+            description="训练运行环境 ID（HTTP-only 模式下保留该参数以兼容旧调用）。",
         ),
     ] = "default",
 ) -> dict[str, Any]:
@@ -185,7 +185,7 @@ def yolo_fix_dataset(
         str,
         Field(
             default="default",
-            description="训练运行环境 ID；用于选择对应 SSH（来自 YOLO_SSH_ENVS）。",
+            description="训练运行环境 ID（HTTP-only 模式下保留该参数以兼容旧调用）。",
         ),
     ] = "default",
     dryRun: Annotated[
@@ -246,7 +246,7 @@ def yolo_sync_dataset(
         str,
         Field(
             default="default",
-            description="训练运行环境 ID；用于选择对应 SSH（来自 YOLO_SSH_ENVS）。",
+            description="训练运行环境 ID（HTTP-only 模式下保留该参数以兼容旧调用）。",
         ),
     ] = "default",
 ) -> dict[str, Any]:
@@ -528,7 +528,7 @@ def yolo_start_training(
             "envId",
             "env_id",
             default="default",
-            description="训练运行环境 ID；用于选择对应 SSH（来自 YOLO_SSH_ENVS）。",
+            description="训练运行环境 ID（HTTP-only 模式下保留该参数以兼容旧调用）。",
         ),
     ] = "default",
     jobId: Annotated[
@@ -692,7 +692,7 @@ def yolo_get_status(
         Field(description="任务 runId（由 yolo_start_training 返回）。"),
     ],
 ) -> dict[str, Any]:
-    """拉取指定任务的训练进度（SSH 读 results.csv），并按配置推送飞书里程碑/终态。
+    """拉取指定任务的训练进度（HTTP 控制面），并按配置推送飞书里程碑/终态。
 
     训练进行中可反复调用；返回含 ok、status、metrics 等。需使用启动时返回的 jobId 与 runId。
     """

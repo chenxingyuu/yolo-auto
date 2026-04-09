@@ -4,10 +4,10 @@
 
 ## 1. 项目定位
 
-**yolo-auto 是一个「编排层」**：通过 MCP（Model Context Protocol）把 Cursor / Claude 等客户端与 **远程 SSH 上的 Ultralytics YOLO 训练环境**、**飞书通知**、可选的 **CVAT / MinIO** 串联起来。
+**yolo-auto 是一个「编排层」**：通过 MCP（Model Context Protocol）把 Cursor / Claude 等客户端与 **训练容器 HTTP 控制面上的 Ultralytics YOLO 训练环境**、**飞书通知**、可选的 **CVAT / MinIO** 串联起来。
 
 - **不是** Ultralytics 的 fork，也 **不替代** 你在远程机器上已安装的 `yolo` CLI 与 CUDA 环境。
-- **不负责** 在本地起 GPU 容器或安装驱动；默认假设训练在 **可 SSH 登录的远程主机** 上执行。
+- **不负责** 在本地起 GPU 容器或安装驱动；默认假设训练在可访问的训练容器控制面上执行（`YOLO_CONTROL_BASE_URL`）。
 
 ## 2. 能力范围（能做什么）
 
@@ -15,7 +15,7 @@
 
 | 能力 | 说明 |
 |------|------|
-| 远程环境检查 | `yolo_setup_env`：SSH 上检查工作目录、模型权重、数据集 YAML 等 |
+| 远程环境检查 | `yolo_setup_env`：通过 HTTP 控制面检查工作目录、模型权重、数据集 YAML 等 |
 | 数据集质检 / 修复 | `yolo_check_dataset`、`yolo_fix_dataset`：针对 YOLO 风格 data.yaml + 图片/标签目录 |
 | 启动训练 | `yolo_start_training`：在远程 **异步** 拉起 `yolo detect train ...`，写入本地任务状态 |
 | 状态与指标 | `yolo_get_status`：读远程 `results.csv`，触发飞书里程碑/终态卡片 |
@@ -41,15 +41,15 @@
 
 ### 2.5 只读上下文（MCP Resources）
 
-提供配置摘要、活跃/历史任务、远程数据集 YAML 列表、模型列表、GPU/系统信息、训练参数指南、CVAT 列表、任务日志片段等（详见 README「MCP Resources」）；**不消耗 tool 配额**，部分内容会触发 SSH。
+提供配置摘要、活跃/历史任务、数据集 YAML 列表、模型列表、GPU/系统信息、训练参数指南、CVAT 列表、任务日志片段等（详见 README「MCP Resources」）；**不消耗 tool 配额**。
 
 ## 3. 边界与限制（不保证什么）
 
 ### 3.1 架构与运行时
 
-- **训练不在 MCP 进程内执行**：长时间计算全部在 **SSH 目标机**；MCP 只做命令下发与状态拉取。
+- **训练不在 MCP 进程内执行**：长时间计算全部在训练容器；MCP 只做 HTTP 控制面调用与状态拉取。
 - **异步模型**：`start_training` 成功只表示「已提交远程进程并登记状态」；真实进度依赖 **`get_status` 或 Worker**，否则状态与飞书消息可能长期不更新。
-- **单机 Worker**：设计上是 **单实例** 持锁轮询；多实例重复跑 Worker 或 IDE 极高频 `get_status` 会放大 SSH/飞书压力。
+- **单机 Worker**：设计上是 **单实例** 持锁轮询；多实例重复跑 Worker 或 IDE 极高频 `get_status` 会放大控制面/飞书压力。
 
 ### 3.2 调参与搜索
 
@@ -66,11 +66,11 @@
 - 未配置有效飞书凭证时，相关能力 **静默跳过或降级**，不应假设「一定有推送」。
 - 卡片能力（含图片 key、更新同一条消息）依赖 **飞书开放平台能力与权限**，受租户策略与机器人能力限制。
 
-### 3.5 CVAT / MinIO / SSH
+### 3.5 CVAT / MinIO / 控制面网络
 
 - 均为 **可选集成**：环境变量不全时，对应工具或资源会失败或返回空结果，需自行补齐运维与网络连通性。
-- SSH 认证、跳板机、多环境 `YOLO_SSH_ENVS` 由部署方维护；本项目不做堡垒机逻辑。
-- 连接失败时，`yolo_get_status` 等路径会尽量返回 **`SSH_*` 风格 `errorCode`**（含 `retryable` / `hint`），而不是未分类的底层异常字符串。
+- 控制面连通性与 Token（`YOLO_CONTROL_BEARER_TOKEN`）由部署方维护；本项目不做网关/堡垒机逻辑。
+- 连接失败时，`yolo_get_status` 等路径会尽量返回 **`REMOTE_*` 风格 `errorCode`**（含 `retryable` / `hint`），而不是未分类的底层异常字符串。
 
 ### 3.6 平台
 

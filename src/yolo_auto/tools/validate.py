@@ -8,7 +8,6 @@ from typing import Any
 from yolo_auto.errors import err, ok
 from yolo_auto.models import JobStatus
 from yolo_auto.remote_control import HttpControlClient, RemoteControlError
-from yolo_auto.ssh_client import SSHClient
 from yolo_auto.state_store import JobStateStore
 
 _ALL_LINE_RE = re.compile(
@@ -217,7 +216,7 @@ if __name__ == "__main__":
 
 
 def _run_remote_per_image_qc(
-    ssh_client: SSHClient,
+    legacy_client: object,
     *,
     best_path: str,
     data_config_path: str,
@@ -239,32 +238,24 @@ def _run_remote_per_image_qc(
     prefix = " && ".join(exports) + " && " if exports else ""
     bash_script = prefix + script_invocation
     full_cmd = "bash -lc " + shlex.quote(bash_script)
-    _stdout, stderr_text, exit_code = ssh_client.execute(full_cmd, timeout=3600)
+    _stdout, stderr_text, exit_code = legacy_client.execute(full_cmd, timeout=3600)
     if exit_code != 0:
         return stderr_text.strip() or _stdout.strip(), "per_image_qc script failed on remote host"
     return None, None
 
 
 def _qc_preview_and_line_count(
-    ssh_client: SSHClient, qc_path: str
+    legacy_client: object, qc_path: str
 ) -> tuple[list[str], int | None]:
-    head_inner = f"head -n 5 {shlex.quote(qc_path)}"
-    head_cmd = f"bash -lc {shlex.quote(head_inner)}"
-    head_out, _, head_code = ssh_client.execute(head_cmd, timeout=60)
-    lines = [ln for ln in head_out.splitlines() if ln.strip()] if head_code == 0 else []
-    wc_inner = f"wc -l < {shlex.quote(qc_path)}"
-    wc_cmd = f"bash -lc {shlex.quote(wc_inner)}"
-    wc_out, _, wc_code = ssh_client.execute(wc_cmd, timeout=60)
-    line_count: int | None = None
-    if wc_code == 0 and wc_out.strip().isdigit():
-        line_count = int(wc_out.strip())
-    return lines, line_count
+    _ = legacy_client
+    _ = qc_path
+    return [], None
 
 
 def run_validation(
     job_id: str,
     state_store: JobStateStore,
-    ssh_client: SSHClient | None,
+    legacy_client: object | None,
     jobs_dir: str,
     work_dir: str,
     *,
@@ -315,14 +306,7 @@ def run_validation(
             payload=record.to_dict(),
         )
 
-    if control_client is None and (ssh_client is None or not ssh_client.file_exists(best_path)):
-        return err(
-            error_code="BEST_MODEL_NOT_FOUND",
-            message="best model file not found on remote host",
-            retryable=False,
-            hint="请确认远程权重路径可访问，并且权限允许读取",
-            payload={"jobId": effective_job_id, "modelPath": best_path},
-        )
+    _ = legacy_client
 
     effective_data_config = data_config_path or record.paths.get("dataConfigPath", "")
     if not effective_data_config:
@@ -360,96 +344,10 @@ def run_validation(
             )
         return ok(dict(remote))
 
-    if ssh_client is None:
-        return err(
-            error_code="REMOTE_CLIENT_MISSING",
-            message="ssh client is required when control client is disabled",
-            retryable=False,
-            hint="请检查 YOLO_REMOTE_MODE 配置",
-            payload={"jobId": effective_job_id},
-        )
-
-    extra_cli_args = _build_extra_cli_args(extra_args)
-    cmd = [
-        f"cd {shlex.quote(work_dir)}",
-        "&&",
-        "yolo detect val",
-        f"model={shlex.quote(best_path)}",
-        f"data={shlex.quote(effective_data_config)}",
-        f"project={shlex.quote(jobs_dir)}",
-        f"name={shlex.quote(f'val-{effective_job_id}')}",
-    ]
-    if img_size is not None:
-        cmd.append(f"imgsz={img_size}")
-    if batch is not None:
-        cmd.append(f"batch={batch}")
-    if device is not None:
-        cmd.append(f"device={shlex.quote(device)}")
-    if extra_cli_args:
-        cmd.append(extra_cli_args)
-
-    val_cmd = " ".join(cmd)
-    stdout_text, stderr_text, exit_code = ssh_client.execute(val_cmd, timeout=300)
-    if exit_code != 0:
-        return err(
-            error_code="VALIDATION_FAILED",
-            message=stderr_text.strip() or stdout_text.strip() or "yolo val failed",
-            retryable=False,
-            hint="检查远程路径、数据集 YAML 与权重文件是否可用",
-            payload={"jobId": effective_job_id},
-        )
-
-    metrics = _parse_val_stdout(stdout_text)
-    if not metrics:
-        return err(
-            error_code="VALIDATION_PARSE_FAILED",
-            message="unable to parse yolo val stdout",
-            retryable=False,
-            hint="检查远程输出格式是否与 Ultralytics 版本一致（all 行可能不同）",
-            payload={"jobId": effective_job_id},
-        )
-
-    qc_path = f"{jobs_dir.rstrip('/')}/val-{effective_job_id}/per_image_qc.jsonl"
-    qc_preview_lines: list[str] = []
-    qc_line_count: int | None = None
-    qc_skipped = skip_per_image_qc
-
-    if not skip_per_image_qc:
-        qcerr, qmsg = _run_remote_per_image_qc(
-            ssh_client,
-            best_path=best_path,
-            data_config_path=effective_data_config,
-            qc_out_path=qc_path,
-            img_size=img_size,
-            device=device,
-        )
-        if qmsg is not None:
-            return err(
-                error_code="PER_IMAGE_QC_FAILED",
-                message=qmsg,
-                retryable=True,
-                hint=(
-                    "确认远端 python3、ultralytics、PyYAML 可用；"
-                    "或 skipPerImageQc=true 仅跑聚合 val"
-                ),
-                payload={
-                    "jobId": effective_job_id,
-                    "metrics": metrics,
-                    "rawOutput": stdout_text,
-                    "qcArtifactPath": qc_path,
-                    "qcStderr": qcerr or "",
-                },
-            )
-        qc_preview_lines, qc_line_count = _qc_preview_and_line_count(ssh_client, qc_path)
-
-    out: dict[str, object] = {
-        "jobId": effective_job_id,
-        "modelPath": best_path,
-        "metrics": metrics,
-        "rawOutput": stdout_text,
-        "qcArtifactPath": "" if skip_per_image_qc else qc_path,
-        "qcPreviewLines": qc_preview_lines,
-        "qcLineCount": qc_line_count,
-        "qcSkipped": qc_skipped,
-    }
-    return ok(out)
+    return err(
+        error_code="REMOTE_CLIENT_MISSING",
+        message="control client is required in HTTP-only mode",
+        retryable=False,
+        hint="请检查 YOLO_CONTROL_BASE_URL 配置",
+        payload={"jobId": effective_job_id},
+    )

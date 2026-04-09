@@ -61,7 +61,7 @@ def register_resources(
     @mcp.resource(
         "yolo://jobs/active",
         name="active-jobs",
-        description="当前运行中或排队中的训练任务列表（从本地状态文件读取，不触发 SSH）。",
+        description="当前运行中或排队中的训练任务列表。",
         mime_type="application/json",
     )
     def resource_active_jobs() -> str:
@@ -80,7 +80,7 @@ def register_resources(
     @mcp.resource(
         "yolo://jobs/history",
         name="job-history",
-        description="最近 50 条训练任务记录（含已完成/失败/停止），不触发 SSH。",
+        description="最近 50 条训练任务记录（含已完成/失败/停止），只读本地状态。",
         mime_type="application/json",
     )
     def resource_job_history() -> str:

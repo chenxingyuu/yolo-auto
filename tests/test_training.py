@@ -184,7 +184,7 @@ def test_start_training_ssh_fail(
     state_store,
 ) -> None:
     mock_ssh.execute.return_value = ("", "", 0)
-    mock_ssh.execute_background.side_effect = RuntimeError("ssh fail")
+    mock_ssh.execute_background.side_effect = RuntimeError("remote fail")
 
     req = _make_req("job-1")
     result = start_training(req, mock_ssh, mock_notifier, state_store)
