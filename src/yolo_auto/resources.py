@@ -177,9 +177,8 @@ def register_resources(
     )
     def resource_datasets() -> str:
         try:
-            payload = control_client.list_jobs(limit=1)
-            _ = payload
-            files: list[str] = []
+            payload = control_client.list_datasets(settings.yolo_datasets_dir)
+            files = [str(item) for item in (payload.get("files") or [])]
         except Exception:
             files = []
         return json.dumps(
@@ -203,8 +202,12 @@ def register_resources(
         bucket = os.getenv("YOLO_MINIO_EXPORT_BUCKET", "cvat-export").strip() or "cvat-export"
         prefix = os.getenv("YOLO_MINIO_EXPORT_PREFIX", "exports").strip() or "exports"
         remote_dir = "/".join(p.strip("/") for p in (alias, bucket, prefix) if p.strip("/"))
-
-        items: list[dict[str, Any]] = []
+        try:
+            payload = control_client.list_minio_datasets(remote_dir)
+            raw_items = payload.get("files") or []
+            items = [dict(item) for item in raw_items if isinstance(item, dict)]
+        except Exception:
+            items = []
         return json.dumps(
             {
                 "source": f"{remote_dir}/",
@@ -222,7 +225,12 @@ def register_resources(
         mime_type="application/json",
     )
     def resource_models() -> str:
-        models: list[dict[str, str]] = []
+        try:
+            payload = control_client.list_models(settings.yolo_models_dir)
+            raw_models = payload.get("models") or []
+            models = [dict(item) for item in raw_models if isinstance(item, dict)]
+        except Exception:
+            models = []
         return json.dumps(
             {
                 "modelsDir": settings.yolo_models_dir,
@@ -240,7 +248,12 @@ def register_resources(
         mime_type="application/json",
     )
     def resource_gpu_info() -> str:
-        gpus: list[dict[str, str | int | float]] = []
+        try:
+            payload = control_client.get_gpu_info()
+            raw_gpus = payload.get("gpus") or []
+            gpus = [dict(item) for item in raw_gpus if isinstance(item, dict)]
+        except Exception:
+            gpus = []
         return json.dumps(
             {"gpus": gpus, "count": len(gpus)},
             ensure_ascii=False,
@@ -254,7 +267,10 @@ def register_resources(
         mime_type="application/json",
     )
     def resource_system_info() -> str:
-        info: dict[str, Any] = {}
+        try:
+            info = control_client.get_system_info()
+        except Exception:
+            info = {}
         return json.dumps(info, ensure_ascii=False, indent=2)
 
     @mcp.resource(

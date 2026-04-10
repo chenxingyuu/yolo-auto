@@ -130,7 +130,9 @@ def _fourth_metric_for_start_card(extra_args: dict[str, Any] | None) -> tuple[st
     return "Patience", ""
 
 
-def _collect_remote_active_jobs(control_client: HttpControlClient, *, limit: int = 100) -> list[dict[str, str]]:
+def _collect_remote_active_jobs(
+    control_client: HttpControlClient, *, limit: int = 100
+) -> list[dict[str, str]]:
     jobs_resp = control_client.list_jobs(limit=limit)
     raw_jobs = jobs_resp.get("jobs")
     if not isinstance(raw_jobs, list):
@@ -143,7 +145,9 @@ def _collect_remote_active_jobs(control_client: HttpControlClient, *, limit: int
         execution_id = str(item.get("executionId") or "").strip()
         if not job_id:
             continue
-        status_resp = control_client.get_training_status({"jobId": job_id, "pid": execution_id or None})
+        status_resp = control_client.get_training_status(
+            {"jobId": job_id, "pid": execution_id or None}
+        )
         status = str(status_resp.get("status") or "").strip().lower()
         if status == JobStatus.RUNNING.value:
             active_jobs.append(
@@ -202,6 +206,9 @@ def start_training(
             hint="请在服务端环境变量配置 MLFLOW_EXPERIMENT_NAME",
             payload={"jobId": req.job_id},
         )
+    extra_args = dict(req.extra_args or {})
+    if req.learning_rate is not None:
+        extra_args["lr0"] = req.learning_rate
     _ = lr_cli
     _ = extra_cli_args
     try:
@@ -234,7 +241,7 @@ def start_training(
                 "epochs": req.epochs,
                 "imgsz": req.img_size,
                 "batch": req.batch,
-                "extraArgs": req.extra_args,
+                "extraArgs": extra_args or None,
                 "workDir": req.work_dir,
                 "mlflowTrackingUri": tracking_uri,
                 "mlflowExperimentName": experiment_name,
@@ -314,6 +321,7 @@ def start_training(
         mlflow_url=mlflow_url,
         top_img_key=feishu_card_img_key,
         top_img_fallback_key=feishu_card_fallback_img_key,
+        title=f"[YOLO] 训练已启动 · {req.job_id}",
     )
     message_id = notifier.send_schema_card_with_message_id(card=card)
     if notifier_store is not None and message_id:
@@ -385,7 +393,7 @@ def stop_training(
             last_notified = st.last_notified_state if st else last_notified
         if last_notified != JobStatus.STOPPED:
             card = build_schema_card_with_mlflow_button(
-                title="[YOLO] 训练已停止",
+                title=f"[YOLO] 训练已停止 · {job_id}",
                 header_template="orange",
                 md_text=f"job={job_id}\nrunId={effective_run_id}",
                 mlflow_url=mlflow_url,

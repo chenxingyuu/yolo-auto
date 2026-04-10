@@ -161,6 +161,24 @@ def _parse_val_stdout(stdout: str) -> dict[str, float] | None:
     }
 
 
+def _safe_float(value: str | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_int(value: str | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
 app = FastAPI(title="yolo-control-api", version="1.0.0")
 _job_pid: dict[str, int] = {}
 _lock = Lock()
@@ -581,6 +599,137 @@ def list_jobs(limit: int = Query(default=20, ge=1, le=100)) -> dict[str, Any]:
         "jobs": [{"jobId": job_id, "executionId": str(pid)} for job_id, pid in items],
         "count": len(items),
     }
+
+
+@app.get("/api/v1/datasets", dependencies=[Depends(_token_guard)])
+def list_datasets(datasetsDir: str = Query(default="/workspace/datasets")) -> dict[str, Any]:
+    files: list[str] = []
+    root = datasetsDir
+    if os.path.isdir(root):
+        for current_root, _dirs, names in os.walk(root):
+            for name in names:
+                lower = name.lower()
+                if lower.endswith(".yaml") or lower.endswith(".yml"):
+                    abs_path = os.path.join(current_root, name)
+                    files.append(os.path.relpath(abs_path, root))
+    files.sort()
+    return {"datasetsDir": root, "files": files, "count": len(files)}
+
+
+@app.get("/api/v1/models", dependencies=[Depends(_token_guard)])
+def list_models(modelsDir: str = Query(default="/workspace/models")) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+    root = modelsDir
+    if os.path.isdir(root):
+        for current_root, _dirs, names in os.walk(root):
+            for name in names:
+                if not name.lower().endswith(".pt"):
+                    continue
+                abs_path = os.path.join(current_root, name)
+                try:
+                    size = os.path.getsize(abs_path)
+                except OSError:
+                    size = None
+                items.append(
+                    {
+                        "path": abs_path,
+                        "relativePath": os.path.relpath(abs_path, root),
+                        "name": name,
+                        "sizeBytes": size,
+                    }
+                )
+    items.sort(key=lambda x: str(x.get("relativePath", "")))
+    return {"modelsDir": root, "models": items, "count": len(items)}
+
+
+@app.get("/api/v1/minio/datasets", dependencies=[Depends(_token_guard)])
+def list_minio_datasets(source: str = Query(..., min_length=1)) -> dict[str, Any]:
+    cmd = f"mc ls --recursive {shlex.quote(source)}"
+    proc = _run_bash(cmd, timeout=120)
+    if proc.returncode != 0:
+        raise HTTPException(status_code=400, detail=proc.stderr.strip() or proc.stdout.strip())
+    items: list[dict[str, Any]] = []
+    for line in (proc.stdout or "").splitlines():
+        row = line.strip()
+        if not row:
+            continue
+        parts = row.split(maxsplit=3)
+        if len(parts) < 4:
+            continue
+        path = parts[3]
+        if not path.lower().endswith(".zip"):
+            continue
+        items.append(
+            {
+                "path": path,
+                "size": parts[2],
+                "modifiedAt": f"{parts[0]} {parts[1]}",
+            }
+        )
+    return {"source": source, "files": items, "count": len(items)}
+
+
+@app.get("/api/v1/env/gpu", dependencies=[Depends(_token_guard)])
+def env_gpu() -> dict[str, Any]:
+    cmd = (
+        "nvidia-smi --query-gpu="
+        "name,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu "
+        "--format=csv,noheader,nounits"
+    )
+    proc = _run_bash(cmd, timeout=30)
+    if proc.returncode != 0:
+        return {"gpus": [], "count": 0, "warning": proc.stderr.strip() or proc.stdout.strip()}
+    gpus: list[dict[str, Any]] = []
+    for idx, line in enumerate((proc.stdout or "").splitlines()):
+        cols = [c.strip() for c in line.split(",")]
+        if len(cols) < 6:
+            continue
+        gpus.append(
+            {
+                "index": idx,
+                "name": cols[0],
+                "memoryTotalMb": _safe_int(cols[1]),
+                "memoryUsedMb": _safe_int(cols[2]),
+                "memoryFreeMb": _safe_int(cols[3]),
+                "utilizationGpuPercent": _safe_float(cols[4]),
+                "temperatureC": _safe_float(cols[5]),
+            }
+        )
+    return {"gpus": gpus, "count": len(gpus)}
+
+
+@app.get("/api/v1/env/system", dependencies=[Depends(_token_guard)])
+def env_system() -> dict[str, Any]:
+    cpu_proc = _run_bash("nproc", timeout=10)
+    mem_proc = _run_bash("free -m", timeout=10)
+    disk_proc = _run_bash("df -h /workspace", timeout=10)
+    info: dict[str, Any] = {}
+    if cpu_proc.returncode == 0:
+        info["cpuCores"] = _safe_int((cpu_proc.stdout or "").strip())
+    if mem_proc.returncode == 0:
+        lines = (mem_proc.stdout or "").splitlines()
+        if len(lines) >= 2:
+            cols = lines[1].split()
+            if len(cols) >= 4:
+                info["memoryMb"] = {
+                    "total": _safe_int(cols[1]),
+                    "used": _safe_int(cols[2]),
+                    "free": _safe_int(cols[3]),
+                }
+    if disk_proc.returncode == 0:
+        lines = (disk_proc.stdout or "").splitlines()
+        if len(lines) >= 2:
+            cols = lines[1].split()
+            if len(cols) >= 6:
+                info["workspaceDisk"] = {
+                    "filesystem": cols[0],
+                    "size": cols[1],
+                    "used": cols[2],
+                    "available": cols[3],
+                    "usePercent": cols[4],
+                    "mountpoint": cols[5],
+                }
+    return info
 
 
 def main() -> None:

@@ -17,6 +17,15 @@ class JobStateStore:
         self._init_schema()
         self._maybe_migrate_json()
 
+    def close(self) -> None:
+        self._conn.close()
+
+    def __enter__(self) -> JobStateStore:
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
+        self.close()
+
     def get(self, job_id: str) -> JobRecord | None:
         row = self._conn.execute(
             "SELECT payload_json FROM jobs WHERE job_id = ?",

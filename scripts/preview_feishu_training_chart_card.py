@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ruff: noqa: E402
-"""向当前飞书群发送一张「训练里程碑」样式 Schema 2.0 卡片（合成折线图 + 三列指标区）。
+"""向飞书群依次发送三张训练卡片预览：启动 → 里程碑 → 完成。
 
 仅用于本地预览。请在项目根目录配置 `.env`（FEISHU_APP_ID / FEISHU_APP_SECRET / FEISHU_CHAT_ID 等）。
 
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _SRC = os.path.join(_ROOT, "src")
@@ -25,7 +26,35 @@ load_dotenv(os.path.join(_ROOT, ".env"))
 
 from yolo_auto.config import load_settings
 from yolo_auto.feishu import FeishuNotifier
-from yolo_auto.tools.status import _build_training_schema_card
+from yolo_auto.tools.status import (
+    _build_training_schema_card,
+    build_schema_card_with_mlflow_button,
+    build_training_started_schema_card,
+)
+
+# 合成训练历史数据（20 epochs）
+_ROWS: list[dict[str, str]] = []
+for _ep in range(1, 21):
+    _ROWS.append({
+        "epoch": str(_ep),
+        "train/box_loss": f"{1.8 - _ep * 0.06:.4f}",
+        "metrics/mAP50(B)": f"{0.05 + _ep * 0.035:.4f}",
+        "metrics/mAP50-95(B)": f"{0.03 + _ep * 0.025:.4f}",
+        "metrics/recall(B)": f"{0.10 + _ep * 0.03:.4f}",
+    })
+
+_FINAL_MAP5095 = float(_ROWS[-1]["metrics/mAP50-95(B)"])
+_FINAL_MAP50 = float(_ROWS[-1]["metrics/mAP50(B)"])
+_FINAL_RECALL = float(_ROWS[-1]["metrics/recall(B)"])
+
+
+def _send(notifier: FeishuNotifier, card: dict, label: str) -> str | None:
+    msg_id = notifier.send_schema_card_with_message_id(card=card)
+    if msg_id:
+        print(f"[{label}] 已发送  message_id={msg_id}")
+    else:
+        print(f"[{label}] 发送失败", file=sys.stderr)
+    return msg_id
 
 
 def main() -> None:
@@ -36,37 +65,62 @@ def main() -> None:
         app_secret=settings.feishu_app_secret,
         chat_id=settings.feishu_chat_id,
     )
-    rows: list[dict[str, str]] = []
-    for ep in range(1, 11):
-        rows.append(
-            {
-                "epoch": str(ep),
-                "train/box_loss": f"{0.5 - ep * 0.03:.4f}",
-                "metrics/mAP50(B)": f"{0.1 + ep * 0.07:.4f}",
-                "metrics/mAP50-95(B)": f"{0.08 + ep * 0.06:.4f}",
-                "metrics/recall(B)": f"{0.2 + ep * 0.05:.4f}",
-            }
-        )
-    card = _build_training_schema_card(
-        title="YOLO模型训练里程碑（预览）",
-        header_template="blue",
-        epoch_text="10/100",
-        elapsed_text="5m30s",
-        eta_text="45m00s",
-        updated_time_text="2099-01-01 12:00:00",
-        mlflow_url=None,
+
+    now_text = time.strftime("%Y-%m-%d %H:%M:%S")
+
+    # ── 1. 训练启动卡片 ──────────────────────────────────────────────────────
+    start_card = build_training_started_schema_card(
+        epochs=100,
+        imgsz=640,
+        batch_display="16",
+        lr_display="0.01",
+        optimizer_display="SGD",
+        device_display="0",
+        workers_display="8",
+        fourth_metric_label="Patience",
+        fourth_metric_value="50",
+        extra_params_line="其他：augment=True，mosaic=1.0",
+        started_time_text=now_text,
+        mlflow_url=settings.mlflow_external_url,
         top_img_key=settings.feishu_card_img_key,
         top_img_fallback_key=settings.feishu_card_fallback_img_key,
-        training_rows=rows,
+        title="[YOLO] 训练已启动 · job-preview",
     )
-    message_id = notifier.send_schema_card_with_message_id(card=card)
-    if not message_id:
-        print(
-            "发送失败：请检查 FEISHU_APP_ID / FEISHU_APP_SECRET / FEISHU_CHAT_ID",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    print(f"已发送 message_id={message_id}")
+    _send(notifier, start_card, "训练启动")
+
+    time.sleep(1)
+
+    # ── 2. 里程碑卡片（epoch 20/100，带折线图）────────────────────────────────
+    milestone_card = _build_training_schema_card(
+        title="[YOLO] 训练进行中 · job-preview",
+        header_template="blue",
+        epoch_text="20/100",
+        elapsed_text="12m30s",
+        eta_text="50m00s",
+        updated_time_text=now_text,
+        mlflow_url=settings.mlflow_external_url,
+        top_img_key=settings.feishu_card_img_key,
+        top_img_fallback_key=settings.feishu_card_fallback_img_key,
+        training_rows=_ROWS,
+    )
+    _send(notifier, milestone_card, "里程碑")
+
+    time.sleep(1)
+
+    # ── 3. 训练完成卡片（绿色，带折线图）────────────────────────────────────
+    completed_card = _build_training_schema_card(
+        title="[YOLO] 训练已完成 · job-preview",
+        header_template="green",
+        epoch_text="100/100",
+        elapsed_text="1h02m",
+        eta_text="—",
+        updated_time_text=now_text,
+        mlflow_url=settings.mlflow_external_url,
+        top_img_key=settings.feishu_card_img_key,
+        top_img_fallback_key=settings.feishu_card_fallback_img_key,
+        training_rows=_ROWS,
+    )
+    _send(notifier, completed_card, "训练完成")
 
 
 if __name__ == "__main__":

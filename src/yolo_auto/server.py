@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import os
 from typing import Annotated, Any
 
@@ -95,6 +96,8 @@ TRACKER = MLflowTracker(
 )
 STATE_STORE = JobStateStore(SETTINGS.yolo_state_file)
 NOTIFY_STORE = NotifierStateStore(SETTINGS.yolo_notify_state_file)
+atexit.register(STATE_STORE.close)
+atexit.register(NOTIFY_STORE.close)
 
 
 def _merge_training_cli_extras(

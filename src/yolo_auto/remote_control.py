@@ -70,6 +70,21 @@ class HttpControlClient:
     def list_jobs(self, limit: int = 20) -> dict[str, Any]:
         return self._request("GET", "/api/v1/jobs", params={"limit": limit})
 
+    def list_datasets(self, datasets_dir: str) -> dict[str, Any]:
+        return self._request("GET", "/api/v1/datasets", params={"datasetsDir": datasets_dir})
+
+    def list_models(self, models_dir: str) -> dict[str, Any]:
+        return self._request("GET", "/api/v1/models", params={"modelsDir": models_dir})
+
+    def list_minio_datasets(self, source: str) -> dict[str, Any]:
+        return self._request("GET", "/api/v1/minio/datasets", params={"source": source})
+
+    def get_gpu_info(self) -> dict[str, Any]:
+        return self._request("GET", "/api/v1/env/gpu")
+
+    def get_system_info(self) -> dict[str, Any]:
+        return self._request("GET", "/api/v1/env/system")
+
     def health_check(self) -> tuple[bool, str]:
         """Return (reachable, detail). Never raises."""
         try:

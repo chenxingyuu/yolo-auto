@@ -30,6 +30,15 @@ class NotifierStateStore:
         self._conn.row_factory = sqlite3.Row
         self._init_schema()
 
+    def close(self) -> None:
+        self._conn.close()
+
+    def __enter__(self) -> NotifierStateStore:
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
+        self.close()
+
     def get(self, job_id: str) -> NotifierState | None:
         row = self._conn.execute(
             """
@@ -60,15 +69,27 @@ class NotifierStateStore:
         last_notified_state: JobStatus | None = None,
     ) -> NotifierState:
         prev = self.get(job_id)
-        effective_message_id = feishu_message_id if feishu_message_id is not None else (prev.feishu_message_id if prev else None)
-        effective_epoch = int(last_reported_epoch) if last_reported_epoch is not None else (prev.last_reported_epoch if prev else 0)
+        effective_message_id = (
+            feishu_message_id
+            if feishu_message_id is not None
+            else (prev.feishu_message_id if prev else None)
+        )
+        effective_epoch = (
+            int(last_reported_epoch)
+            if last_reported_epoch is not None
+            else (prev.last_reported_epoch if prev else 0)
+        )
         effective_state = (
-            last_notified_state if last_notified_state is not None else (prev.last_notified_state if prev else None)
+            last_notified_state
+            if last_notified_state is not None
+            else (prev.last_notified_state if prev else None)
         )
         with self._conn:
             self._conn.execute(
                 """
-                INSERT INTO notify_state(job_id, feishu_message_id, last_reported_epoch, last_notified_state, updated_at)
+                INSERT INTO notify_state(
+                  job_id, feishu_message_id, last_reported_epoch, last_notified_state, updated_at
+                )
                 VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(job_id) DO UPDATE SET
                   feishu_message_id = excluded.feishu_message_id,
