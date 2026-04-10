@@ -512,6 +512,37 @@ def _estimate_eta_seconds(*, epoch: int, total_epochs: int, elapsed_seconds: int
     return int(avg_epoch_seconds * remaining_epochs)
 
 
+def _build_progress_summary(
+    *,
+    current_epoch: int,
+    total_epochs: int,
+    elapsed_seconds: int,
+    metrics: dict[str, Any],
+    primary_metric_key: str,
+) -> str:
+    """返回单行进度摘要，如 [████░░░░░░] 40/100 epochs | mAP50-95=0.654 | ETA≈1h23m"""
+    bar_width = 10
+    ratio = current_epoch / total_epochs if total_epochs > 0 else 0.0
+    filled = round(ratio * bar_width)
+    bar = "█" * filled + "░" * (bar_width - filled)
+
+    metric_val = float(
+        metrics.get(primary_metric_key)
+        or metrics.get("map5095")
+        or 0.0
+    )
+    metric_part = f"{primary_metric_key}={metric_val:.3f}"
+
+    eta_s = _estimate_eta_seconds(
+        epoch=current_epoch,
+        total_epochs=total_epochs,
+        elapsed_seconds=elapsed_seconds,
+    )
+    eta_part = f" | ETA≈{_format_duration(eta_s)}" if eta_s is not None else ""
+
+    return f"[{bar}] {current_epoch}/{total_epochs} epochs | {metric_part}{eta_part}"
+
+
 def _pick_row_for_epoch(rows: list[dict[str, Any]], target_epoch: int) -> dict[str, Any] | None:
     if target_epoch <= 0:
         return None
@@ -719,13 +750,66 @@ def get_status(
             target_status = JobStatus.RUNNING
         if target_status is not None and record.status != target_status:
             state_store.update_status(job_id, target_status, now)
+
+        current_metrics = dict(remote.get("metrics") or {})
+        current_epoch = int(current_metrics.get("epoch") or 0)
+        total_epochs = record.train_epochs or 0
+        elapsed_seconds = int(remote.get("elapsedSeconds") or 0)
+        training_rows = list(remote.get("trainingRows") or [])
+
+        progress_summary = _build_progress_summary(
+            current_epoch=current_epoch,
+            total_epochs=total_epochs,
+            elapsed_seconds=elapsed_seconds,
+            metrics=current_metrics,
+            primary_metric_key=primary_metric_key,
+        )
+
+        # 里程碑推送：训练中且达到 epoch 阈值
+        should_notify_milestone = (
+            feishu_report_enable
+            and feishu_report_every_n_epochs > 0
+            and status_text == JobStatus.RUNNING.value
+            and current_epoch > 0
+            and current_epoch >= record.last_reported_epoch + feishu_report_every_n_epochs
+        )
+        if should_notify_milestone:
+            eta_s = _estimate_eta_seconds(
+                epoch=current_epoch,
+                total_epochs=total_epochs,
+                elapsed_seconds=elapsed_seconds,
+            )
+            milestone_card = _build_training_schema_card(
+                title=f"[YOLO] 训练进行中 · {job_id}",
+                header_template="blue",
+                epoch_text=f"{current_epoch}/{total_epochs}",
+                elapsed_text=_format_duration(elapsed_seconds),
+                eta_text=_format_duration(eta_s) if eta_s is not None else "—",
+                updated_time_text=_format_card_timestamp(now),
+                mlflow_url=mlflow_url,
+                top_img_key=feishu_card_img_key,
+                top_img_fallback_key=feishu_card_fallback_img_key,
+                training_rows=training_rows or None,
+            )
+            _upsert_training_card(
+                record=record,
+                now_ts=now,
+                state_store=state_store,
+                notifier_store=notifier_store,
+                notifier=notifier,
+                card=milestone_card,
+            )
+            state_store.mark_milestone_epoch(job_id, current_epoch, now)
+            record = state_store.get(job_id) or record
+
         return ok(
             {
                 "jobId": job_id,
                 "runId": effective_run_id,
                 "status": status_text,
                 "progress": float(remote.get("progress", 0.0) or 0.0),
-                "metrics": dict(remote.get("metrics", {})),
+                "metrics": current_metrics,
+                "progressSummary": progress_summary,
                 "artifacts": {
                     "best": record.paths.get("bestPath", ""),
                     "last": record.paths.get("lastPath", ""),

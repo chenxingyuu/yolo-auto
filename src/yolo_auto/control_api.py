@@ -266,6 +266,7 @@ def train_status(
             process_alive = False
 
     metrics: dict[str, Any] = {}
+    training_rows: list[dict[str, Any]] = []
     progress = 0.0
     if metricsPath and os.path.isfile(metricsPath):
         text = open(metricsPath, encoding="utf-8").read()
@@ -285,6 +286,17 @@ def train_status(
             }
             if totalEpochs and totalEpochs > 0:
                 progress = round(min(1.0, epoch / totalEpochs), 4)
+            # 采样历史行，严格上限 100 条，避免响应过大；末尾始终是最新一行
+            _max_rows = 100
+            if len(rows) <= _max_rows:
+                training_rows = [dict(r) for r in rows]
+            else:
+                step = max(1, len(rows) // _max_rows)
+                sampled = [dict(rows[i]) for i in range(0, len(rows), step)][:_max_rows]
+                last_dict = dict(rows[-1])
+                if sampled[-1] != last_dict:
+                    sampled[-1] = last_dict  # 替换末尾，而非追加
+                training_rows = sampled
 
     log_tail = ""
     if logPath and os.path.isfile(logPath):
@@ -303,6 +315,7 @@ def train_status(
         "processAlive": process_alive,
         "progress": progress,
         "metrics": metrics,
+        "trainingRows": training_rows,
         "elapsedSeconds": elapsed,
         "logTail": log_tail,
     }
