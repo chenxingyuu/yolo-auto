@@ -89,7 +89,7 @@ def load_settings() -> Settings:
         primary_metric_key=_get_env("YOLO_PRIMARY_METRIC", "map5095"),
         mlflow_tracking_uri=_get_env(
             "MLFLOW_TRACKING_URI",
-            "sqlite:////data/mlflow/mlflow.db",
+            "sqlite:////workspace/mlflow.db",
         ),
         mlflow_experiment_name=_get_env("MLFLOW_EXPERIMENT_NAME", "yolo-auto"),
         mlflow_external_url=_get_env_optional("MLFLOW_EXTERNAL_URL"),

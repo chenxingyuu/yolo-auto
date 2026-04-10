@@ -46,6 +46,14 @@ class MLflowTracker:
         base = self._external_url.rstrip("/")
         return f"{base}/#/experiments/{exp_id}"
 
+    def ping(self) -> tuple[bool, str]:
+        """Return (accessible, detail). Never raises."""
+        try:
+            self._client.search_experiments(max_results=1)
+            return True, f"可访问：{self._experiment_name}"
+        except Exception as exc:
+            return False, f"访问失败：{exc}"
+
     def get_run_url(self, run_id: str) -> str | None:
         """Return MLflow UI URL for a specific run."""
         rid = (run_id or "").strip()

@@ -70,6 +70,18 @@ class HttpControlClient:
     def list_jobs(self, limit: int = 20) -> dict[str, Any]:
         return self._request("GET", "/api/v1/jobs", params={"limit": limit})
 
+    def health_check(self) -> tuple[bool, str]:
+        """Return (reachable, detail). Never raises."""
+        try:
+            self._request("GET", "/api/v1/jobs", params={"limit": 1})
+            return True, f"{self._config.base_url} 可达"
+        except RemoteControlError as exc:
+            if exc.error_code == "REMOTE_UNAUTHORIZED":
+                return False, f"认证失败：Token 无效或缺失（{self._config.base_url}）"
+            return False, f"{exc.hint}（{self._config.base_url}）"
+        except Exception as exc:
+            return False, f"未知错误：{exc}"
+
     def _request(
         self,
         method: str,

@@ -16,6 +16,7 @@ from yolo_auto.prompts import register_prompts
 from yolo_auto.remote_control import HttpControlClient, RemoteControlConfig
 from yolo_auto.resources import register_resources
 from yolo_auto.state_store import JobStateStore
+from yolo_auto.tools.check_config import check_config
 from yolo_auto.tools.job_naming import resolve_job_id
 from yolo_auto.tools.jobs import delete_job, get_job, list_jobs
 from yolo_auto.tools.status import get_status
@@ -105,6 +106,18 @@ def _merge_training_cli_extras(
         if value is not None:
             merged[key] = value
     return merged
+
+
+@mcp.tool(name="yolo_check_config")
+def yolo_check_config() -> dict[str, Any]:
+    """检查当前配置是否满足各项功能的运行条件。
+
+    返回逐项诊断（required / optional）、当前能力状态（capabilities）、
+    已配置的远程路径（paths），以及具体的 nextSteps 操作建议。
+
+    建议在第一次使用或遇到连接/通知问题时调用。
+    """
+    return check_config(SETTINGS, CONTROL_CLIENT, TRACKER)
 
 
 @mcp.tool(name="yolo_setup_env")
