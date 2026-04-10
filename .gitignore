@@ -14,3 +14,4 @@ mlruns/
 # Secrets / runtime state
 .env
 .state/
+.mlflow/
