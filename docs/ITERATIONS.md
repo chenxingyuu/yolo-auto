@@ -4,6 +4,58 @@
 
 ---
 
+## 2026-04-14 — SAHI 切片支持（全景/高分辨率数据集）
+
+### 目标摘要
+
+全景摄像头输出的超宽图像（如 7680×1048，宽高比约 7.3:1）直接送入 YOLO 会被 letterbox 压缩为正方形，导致目标严重形变、检测精度下降。本次迭代引入 SAHI（Slicing Aided Hyper Inference）切片预处理工具，将大图切割为 640×640 的重叠瓦片并重新映射 bbox 标注，生成标准 YOLO 训练集后即可正常训练。
+
+### 用户可见变更
+
+| 区域 | 变更 |
+|------|------|
+| `yolo_sahi_slice`（新 MCP 工具） | 将源数据集按滑动窗口切片，输出新数据集并返回 `dataConfigPath`；支持配置瓦片尺寸、重叠比、最小 bbox 保留面积比。 |
+| 标准工作流说明 | 在步骤 4（同步数据集）后插入步骤 4b，说明全景数据集的可选切片流程。 |
+| `POST /api/v1/dataset/sahi-slice`（控制面新端点） | 训练容器侧实现：读取源 YAML → 滑动窗口切图 → YOLO bbox 坐标重映射 → 写出新数据集目录和 `data.yaml`。 |
+
+### 推荐工作流（全景数据集）
+
+```
+yolo_sync_dataset
+  → yolo_sahi_slice(dataConfigPath=..., outputDatasetName="pano-sliced")
+  → yolo_check_dataset(dataConfigPath=<新路径>)
+  → yolo_start_training(dataConfigPath=<新路径>, imgSize=640, ...)
+```
+
+### 切片参数说明
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `sliceHeight` / `sliceWidth` | 640 | 瓦片尺寸，与 YOLO imgsz 对齐 |
+| `overlapHeightRatio` / `overlapWidthRatio` | 0.2 | 相邻瓦片重叠比，防止边界漏检 |
+| `minAreaRatio` | 0.1 | bbox 被裁剪后保留面积 < 原面积×此值时丢弃 |
+
+7680×1048 图像使用默认参数，每帧约生成 **25 个瓦片**。
+
+### 实现说明
+
+- 切片与 bbox 重映射纯用 PIL（ultralytics 已包含），**控制面容器无需额外安装 `sahi` 包**。
+- 每张切片输出为 `{原始stem}_{序号:04d}.jpg`，标注文件同名 `.txt`（YOLO 归一化格式）。
+- `minAreaRatio` 过滤在切片边缘被大量裁切的 bbox，避免引入噪声样本。
+
+### 兼容与迁移
+
+- 纯新增，不修改现有工具与接口，旧工作流无需任何变更。
+- 如不使用全景数据集，可完全跳过此步骤。
+
+### 已知限制
+
+- 当前仅处理 train / val / test 三个 split，不支持自定义 split 名。
+- 切片后图像统一保存为 JPEG（quality=95），不保留原始格式。
+- 推理侧 SAHI 分块推理 + NMS 合并不在本次范围内。
+
+---
+
 ## 2026-04-08 — 数据血缘、导出 manifest、HTTP 错误码
 
 ### 目标摘要
