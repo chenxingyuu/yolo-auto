@@ -130,6 +130,17 @@ class ExportRequest(BaseModel):
     extraArgs: dict[str, Any] | None = None
 
 
+class SahiSliceRequest(BaseModel):
+    dataConfigPath: str
+    outputDatasetName: str
+    outputDatasetsDir: str = "/workspace/datasets"
+    sliceHeight: int = Field(default=640, gt=0)
+    sliceWidth: int = Field(default=640, gt=0)
+    overlapHeightRatio: float = Field(default=0.2, ge=0.0, lt=1.0)
+    overlapWidthRatio: float = Field(default=0.2, ge=0.0, lt=1.0)
+    minAreaRatio: float = Field(default=0.1, ge=0.0, le=1.0)
+
+
 class AutoTuneRequest(BaseModel):
     baseJobId: str
     model: str
@@ -515,6 +526,194 @@ def export_run(req: ExportRequest) -> dict[str, Any]:
             if any(f.endswith(ext) for ext in (".onnx", ".engine", ".mlmodel", ".pt")):
                 artifacts.append({"path": os.path.join(root, f)})
     return {"ok": True, "jobId": req.jobId, "artifacts": artifacts}
+
+
+def _slice_windows(
+    img_h: int, img_w: int, sh: int, sw: int, oh: float, ow: float
+) -> list[tuple[int, int, int, int]]:
+    """Generate (x1, y1, x2, y2) non-overlapping+overlap sliding windows."""
+    step_h = max(1, int(sh * (1 - oh)))
+    step_w = max(1, int(sw * (1 - ow)))
+    windows: list[tuple[int, int, int, int]] = []
+    y = 0
+    while True:
+        y1 = y
+        y2 = min(y + sh, img_h)
+        x = 0
+        while True:
+            x1 = x
+            x2 = min(x + sw, img_w)
+            windows.append((x1, y1, x2, y2))
+            if x2 >= img_w:
+                break
+            x += step_w
+        if y2 >= img_h:
+            break
+        y += step_h
+    return windows
+
+
+def _remap_yolo_bboxes(
+    labels: list[str],
+    img_w: int,
+    img_h: int,
+    x1: int,
+    y1: int,
+    x2: int,
+    y2: int,
+    min_area_ratio: float,
+) -> list[str]:
+    """Clip and remap YOLO-format labels from a full image into a slice."""
+    slice_w = x2 - x1
+    slice_h = y2 - y1
+    result: list[str] = []
+    for line in labels:
+        parts = line.strip().split()
+        if len(parts) != 5:
+            continue
+        cls = parts[0]
+        cx_n, cy_n, w_n, h_n = map(float, parts[1:])
+        cx = cx_n * img_w
+        cy = cy_n * img_h
+        bw = w_n * img_w
+        bh = h_n * img_h
+        bx1, by1 = cx - bw / 2, cy - bh / 2
+        bx2, by2 = cx + bw / 2, cy + bh / 2
+        ix1 = max(bx1, x1)
+        iy1 = max(by1, y1)
+        ix2 = min(bx2, x2)
+        iy2 = min(by2, y2)
+        if ix2 <= ix1 or iy2 <= iy1:
+            continue
+        orig_area = bw * bh
+        if orig_area <= 0:
+            continue
+        if (ix2 - ix1) * (iy2 - iy1) / orig_area < min_area_ratio:
+            continue
+        new_cx = max(0.0, min(1.0, ((ix1 + ix2) / 2 - x1) / slice_w))
+        new_cy = max(0.0, min(1.0, ((iy1 + iy2) / 2 - y1) / slice_h))
+        new_w = max(0.0, min(1.0, (ix2 - ix1) / slice_w))
+        new_h = max(0.0, min(1.0, (iy2 - iy1) / slice_h))
+        result.append(f"{cls} {new_cx:.6f} {new_cy:.6f} {new_w:.6f} {new_h:.6f}")
+    return result
+
+
+def _find_label_path(img_path: str) -> str:
+    if "/images/" in img_path:
+        label_p = img_path.replace("/images/", "/labels/", 1)
+    else:
+        label_p = img_path
+    base, _ = os.path.splitext(label_p)
+    return base + ".txt"
+
+
+def _collect_split_images(split_ref: str, dataset_root: str) -> list[str]:
+    images: list[str] = []
+    if not split_ref:
+        return images
+    p = split_ref if split_ref.startswith("/") else os.path.join(dataset_root, split_ref)
+    img_exts = {"jpg", "jpeg", "png", "bmp", "webp", "tif", "tiff"}
+    if os.path.isdir(p):
+        for root, _, files in os.walk(p):
+            for f in files:
+                if f.lower().rsplit(".", 1)[-1] in img_exts:
+                    images.append(os.path.join(root, f))
+    elif os.path.isfile(p) and p.lower().endswith(".txt"):
+        with open(p, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    img = line if line.startswith("/") else os.path.join(dataset_root, line)
+                    images.append(img)
+    return sorted(images)
+
+
+@app.post("/api/v1/dataset/sahi-slice", dependencies=[Depends(_token_guard)])
+def dataset_sahi_slice(req: SahiSliceRequest) -> dict[str, Any]:
+    from PIL import Image  # pillow is bundled with ultralytics
+
+    if not os.path.isfile(req.dataConfigPath):
+        raise HTTPException(status_code=400, detail=f"data config not found: {req.dataConfigPath}")
+
+    with open(req.dataConfigPath, encoding="utf-8") as fp:
+        cfg = yaml.safe_load(fp) or {}
+
+    yaml_dir = os.path.dirname(req.dataConfigPath)
+    dataset_root = str(cfg.get("path", yaml_dir))
+    if not dataset_root.startswith("/"):
+        dataset_root = os.path.normpath(os.path.join(yaml_dir, dataset_root))
+
+    out_dir = os.path.join(req.outputDatasetsDir, req.outputDatasetName)
+    total_source = 0
+    total_slices = 0
+    new_cfg: dict[str, Any] = {
+        "path": out_dir,
+        "nc": cfg.get("nc"),
+        "names": cfg.get("names"),
+    }
+
+    for split in ("train", "val", "test"):
+        split_ref = str(cfg.get(split, "")).strip()
+        if not split_ref:
+            continue
+        images = _collect_split_images(split_ref, dataset_root)
+        if not images:
+            new_cfg[split] = f"images/{split}"
+            continue
+
+        out_img_dir = os.path.join(out_dir, "images", split)
+        out_lbl_dir = os.path.join(out_dir, "labels", split)
+        os.makedirs(out_img_dir, exist_ok=True)
+        os.makedirs(out_lbl_dir, exist_ok=True)
+
+        for img_path in images:
+            if not os.path.isfile(img_path):
+                continue
+            total_source += 1
+            img = Image.open(img_path).convert("RGB")
+            img_w, img_h = img.size
+
+            label_path = _find_label_path(img_path)
+            labels: list[str] = []
+            if os.path.isfile(label_path):
+                with open(label_path, encoding="utf-8") as lf:
+                    labels = [ln for ln in lf.read().splitlines() if ln.strip()]
+
+            stem = os.path.splitext(os.path.basename(img_path))[0]
+            windows = _slice_windows(
+                img_h, img_w,
+                req.sliceHeight, req.sliceWidth,
+                req.overlapHeightRatio, req.overlapWidthRatio,
+            )
+            for idx, (wx1, wy1, wx2, wy2) in enumerate(windows):
+                slice_img = img.crop((wx1, wy1, wx2, wy2))
+                out_stem = f"{stem}_{idx:04d}"
+                slice_img.save(
+                    os.path.join(out_img_dir, f"{out_stem}.jpg"), "JPEG", quality=95
+                )
+                remapped = _remap_yolo_bboxes(
+                    labels, img_w, img_h, wx1, wy1, wx2, wy2, req.minAreaRatio
+                )
+                with open(os.path.join(out_lbl_dir, f"{out_stem}.txt"), "w", encoding="utf-8") as lf:
+                    lf.write("\n".join(remapped) + ("\n" if remapped else ""))
+                total_slices += 1
+
+        new_cfg[split] = f"images/{split}"
+
+    out_yaml = os.path.join(out_dir, "data.yaml")
+    with open(out_yaml, "w", encoding="utf-8") as fp:
+        yaml.dump(new_cfg, fp, allow_unicode=True, default_flow_style=False)
+
+    avg = round(total_slices / total_source, 2) if total_source > 0 else 0.0
+    return {
+        "ok": True,
+        "dataConfigPath": out_yaml,
+        "stats": {
+            "sourceImages": total_source,
+            "totalSlices": total_slices,
+            "avgSlicesPerImage": avg,
+        },
+    }
 
 
 @app.post("/api/v1/tune/auto", dependencies=[Depends(_token_guard)])

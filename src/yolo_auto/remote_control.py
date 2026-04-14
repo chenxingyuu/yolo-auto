@@ -79,6 +79,9 @@ class HttpControlClient:
     def list_minio_datasets(self, source: str) -> dict[str, Any]:
         return self._request("GET", "/api/v1/minio/datasets", params={"source": source})
 
+    def sahi_slice_dataset(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", "/api/v1/dataset/sahi-slice", json=payload)
+
     def get_gpu_info(self) -> dict[str, Any]:
         return self._request("GET", "/api/v1/env/gpu")
 
