@@ -27,7 +27,7 @@ WORKDIR ${WORKDIR}
 
 # 将训练控制面代码放入训练工作区目录
 RUN mkdir -p /workspace/yolo-auto-control
-RUN cd /workspace/yolo-auto-control && uv init && uv add fastapi uvicorn pydantic pyyaml -i https://mirrors.aliyun.com/pypi/simple
+RUN cd /workspace/yolo-auto-control && uv init && uv add fastapi uvicorn pydantic pyyaml pillow -i https://mirrors.aliyun.com/pypi/simple
 COPY src/yolo_auto/control_api.py /workspace/yolo-auto-control/control_api.py
 
 EXPOSE 18080

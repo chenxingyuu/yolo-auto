@@ -531,23 +531,24 @@ def export_run(req: ExportRequest) -> dict[str, Any]:
 def _slice_windows(
     img_h: int, img_w: int, sh: int, sw: int, oh: float, ow: float
 ) -> list[tuple[int, int, int, int]]:
-    """Generate (x1, y1, x2, y2) non-overlapping+overlap sliding windows."""
+    """Generate (x1, y1, x2, y2) sliding windows; edge tiles are shifted back
+    to maintain full sh×sw size (SAHI-aligned behaviour)."""
     step_h = max(1, int(sh * (1 - oh)))
     step_w = max(1, int(sw * (1 - ow)))
     windows: list[tuple[int, int, int, int]] = []
     y = 0
     while True:
-        y1 = y
-        y2 = min(y + sh, img_h)
+        y1 = min(y, max(0, img_h - sh))   # 回退，确保 y1+sh <= img_h
+        y2 = y1 + sh
         x = 0
         while True:
-            x1 = x
-            x2 = min(x + sw, img_w)
+            x1 = min(x, max(0, img_w - sw))  # 回退，确保 x1+sw <= img_w
+            x2 = x1 + sw
             windows.append((x1, y1, x2, y2))
-            if x2 >= img_w:
+            if x + sw >= img_w:
                 break
             x += step_w
-        if y2 >= img_h:
+        if y + sh >= img_h:
             break
         y += step_h
     return windows
