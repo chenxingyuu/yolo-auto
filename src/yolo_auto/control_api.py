@@ -695,7 +695,8 @@ def dataset_sahi_slice(req: SahiSliceRequest) -> dict[str, Any]:
                 remapped = _remap_yolo_bboxes(
                     labels, img_w, img_h, wx1, wy1, wx2, wy2, req.minAreaRatio
                 )
-                with open(os.path.join(out_lbl_dir, f"{out_stem}.txt"), "w", encoding="utf-8") as lf:
+                label_out_path = os.path.join(out_lbl_dir, f"{out_stem}.txt")
+                with open(label_out_path, "w", encoding="utf-8") as lf:
                     lf.write("\n".join(remapped) + ("\n" if remapped else ""))
                 total_slices += 1
 

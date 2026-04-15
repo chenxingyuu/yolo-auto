@@ -5,17 +5,15 @@ from unittest.mock import MagicMock
 
 from mcp.server.fastmcp import FastMCP
 
-from yolo_auto.config import Settings, SSHEnv
+from yolo_auto.config import Settings
 from yolo_auto.resources import register_resources
 
 
 def _settings() -> Settings:
     return Settings(
-        yolo_ssh_host="127.0.0.1",
-        yolo_ssh_port=22,
-        yolo_ssh_user="u",
-        yolo_ssh_key_path="k",
-        yolo_ssh_envs={"default": SSHEnv(host="127.0.0.1", port=22, user="u", key_path="k")},
+        yolo_control_base_url="http://127.0.0.1:18080",
+        yolo_control_bearer_token=None,
+        yolo_control_timeout_seconds=30,
         feishu_webhook_url="https://example.com",
         feishu_app_id=None,
         feishu_app_secret=None,
@@ -33,6 +31,7 @@ def _settings() -> Settings:
         yolo_jobs_dir="/workspace/jobs",
         yolo_models_dir="/workspace/models",
         yolo_state_file=".state/jobs.db",
+        yolo_notify_state_file=".state/notify.db",
         watch_poll_interval_seconds=30,
         watch_lock_file=".state/watch.lock",
     )
@@ -40,7 +39,7 @@ def _settings() -> Settings:
 
 def test_register_resources_exposes_mlflow_readonly(state_store) -> None:
     mcp = FastMCP("test")
-    mock_ssh = MagicMock()
+    mock_control = MagicMock()
     mock_tracker = MagicMock()
     mock_tracker.summarize_top_runs.return_value = [
         {"runId": "r1", "metricKey": "map5095", "metric": 0.5}
@@ -61,7 +60,7 @@ def test_register_resources_exposes_mlflow_readonly(state_store) -> None:
     register_resources(
         mcp,
         _settings(),
-        {"default": mock_ssh},
+        mock_control,
         state_store,
         mock_tracker,
     )

@@ -20,8 +20,8 @@ from yolo_auto.state_store import JobStateStore
 from yolo_auto.tools.check_config import check_config
 from yolo_auto.tools.job_naming import resolve_job_id
 from yolo_auto.tools.jobs import delete_job, get_job, list_jobs
-from yolo_auto.tools.status import get_status
 from yolo_auto.tools.sahi_slice import sahi_slice_dataset as _sahi_slice_dataset
+from yolo_auto.tools.status import get_status
 from yolo_auto.tools.training import TrainRequest, start_training, stop_training
 from yolo_auto.tools.validate import run_validation
 from yolo_auto.tracker import MLflowTracker, TrackerConfig
@@ -294,14 +294,43 @@ def yolo_sync_dataset(
 
 @mcp.tool(name="yolo_sahi_slice")
 def yolo_sahi_slice(
-    dataConfigPath: Annotated[str, Field(description="源数据集 YAML 路径（远程）。")],
-    outputDatasetName: Annotated[str, Field(description="切片后数据集的目录名，保存至 YOLO_DATASETS_DIR/<outputDatasetName>/。")],
-    sliceHeight: Annotated[int, Field(default=640, gt=0, description="瓦片高度（像素），建议 640 或 1024。")] = 640,
-    sliceWidth: Annotated[int, Field(default=640, gt=0, description="瓦片宽度（像素），建议 640 或 1024。")] = 640,
-    overlapHeightRatio: Annotated[float, Field(default=0.2, ge=0.0, lt=1.0, description="垂直方向重叠比例（0-1）。")] = 0.2,
-    overlapWidthRatio: Annotated[float, Field(default=0.2, ge=0.0, lt=1.0, description="水平方向重叠比例（0-1）。")] = 0.2,
-    minAreaRatio: Annotated[float, Field(default=0.1, ge=0.0, le=1.0, description="切片边缘保留 bbox 的最小面积比，低于此值的 bbox 丢弃。")] = 0.1,
-    envId: Annotated[str, Field(default="default", description="训练环境 ID（兼容字段）。")] = "default",
+    dataConfigPath: Annotated[
+        str,
+        Field(description="源数据集 YAML 路径（远程）。"),
+    ],
+    outputDatasetName: Annotated[
+        str,
+        Field(description="切片后数据集的目录名，保存至 YOLO_DATASETS_DIR/<outputDatasetName>/。"),
+    ],
+    sliceHeight: Annotated[
+        int,
+        Field(default=640, gt=0, description="瓦片高度（像素），建议 640 或 1024。"),
+    ] = 640,
+    sliceWidth: Annotated[
+        int,
+        Field(default=640, gt=0, description="瓦片宽度（像素），建议 640 或 1024。"),
+    ] = 640,
+    overlapHeightRatio: Annotated[
+        float,
+        Field(default=0.2, ge=0.0, lt=1.0, description="垂直方向重叠比例（0-1）。"),
+    ] = 0.2,
+    overlapWidthRatio: Annotated[
+        float,
+        Field(default=0.2, ge=0.0, lt=1.0, description="水平方向重叠比例（0-1）。"),
+    ] = 0.2,
+    minAreaRatio: Annotated[
+        float,
+        Field(
+            default=0.1,
+            ge=0.0,
+            le=1.0,
+            description="切片边缘保留 bbox 的最小面积比，低于此值的 bbox 丢弃。",
+        ),
+    ] = 0.1,
+    envId: Annotated[
+        str,
+        Field(default="default", description="训练环境 ID（兼容字段）。"),
+    ] = "default",
 ) -> dict[str, Any]:
     """用 SAHI 将高分辨率/全景数据集切片为标准 YOLO 训练集。
 

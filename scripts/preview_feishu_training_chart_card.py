@@ -28,7 +28,6 @@ from yolo_auto.config import load_settings
 from yolo_auto.feishu import FeishuNotifier
 from yolo_auto.tools.status import (
     _build_training_schema_card,
-    build_schema_card_with_mlflow_button,
     build_training_started_schema_card,
 )
 
@@ -42,11 +41,6 @@ for _ep in range(1, 21):
         "metrics/mAP50-95(B)": f"{0.03 + _ep * 0.025:.4f}",
         "metrics/recall(B)": f"{0.10 + _ep * 0.03:.4f}",
     })
-
-_FINAL_MAP5095 = float(_ROWS[-1]["metrics/mAP50-95(B)"])
-_FINAL_MAP50 = float(_ROWS[-1]["metrics/mAP50(B)"])
-_FINAL_RECALL = float(_ROWS[-1]["metrics/recall(B)"])
-
 
 def _send(notifier: FeishuNotifier, card: dict, label: str) -> str | None:
     msg_id = notifier.send_schema_card_with_message_id(card=card)
