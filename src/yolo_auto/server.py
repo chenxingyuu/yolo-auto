@@ -332,12 +332,12 @@ def yolo_sahi_slice(
         Field(default="default", description="训练环境 ID（兼容字段）。"),
     ] = "default",
 ) -> dict[str, Any]:
-    """用 SAHI 将高分辨率/全景数据集切片为标准 YOLO 训练集。
+    """用 SAHI 思路将高分辨率/全景数据集切片为标准 YOLO 训练集。
 
     适用于全景摄像头（如 7680×1048）等极端宽高比图像。
     切片后得到新的 dataConfigPath，直接用于 yolo_start_training（imgsz=640）。
-
-    远程容器需安装：pip install sahi ultralytics
+    输出在 images/<split>/ 与 labels/<split>/ 下保留源数据相对 split 目录的子路径；
+    控制面实现为 PIL 裁切与坐标重映射（见 docs/ITERATIONS.md），无需单独安装 sahi 包。
     """
     _ = envId
     return _sahi_slice_dataset(

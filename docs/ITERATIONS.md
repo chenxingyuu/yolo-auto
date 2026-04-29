@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-04-29 — SAHI 切片保留 images/<split> 下子目录
+
+### 用户可见变更
+
+- `POST /api/v1/dataset/sahi-slice`：输出路径在 `images/<split>/` 与 `labels/<split>/` 下**镜像**源图相对 split 根目录的子路径；瓦片文件名仍为 `{原文件名}_{四位序号}.jpg`（不再把所有切片压平到 `images/<split>/` 根目录）。
+- 子路径与 split 锚点计算均在 `control_api.py` 内实现，与 `docker/Dockerfile` 仅 COPY 单文件控制面的部署方式一致。
+
+### 兼容与迁移
+
+- 仅影响**新**切片产物；已生成的扁平数据集无需回滚，可按需重新跑一次切片。
+
+---
+
 ## 2026-04-14 — SAHI 切片支持（全景/高分辨率数据集）
 
 ### 目标摘要
@@ -40,7 +53,7 @@ yolo_sync_dataset
 ### 实现说明
 
 - 切片与 bbox 重映射纯用 PIL（ultralytics 已包含），**控制面容器无需额外安装 `sahi` 包**。
-- 每张切片输出为 `{原始stem}_{序号:04d}.jpg`，标注文件同名 `.txt`（YOLO 归一化格式）。
+- 每张切片输出为 `{原始stem}_{序号:04d}.jpg`，标注文件同名 `.txt`（YOLO 归一化格式）；相对 `images/<split>/` 的**子目录结构**与源数据一致（见 2026-04-29 条目）。
 - `minAreaRatio` 过滤在切片边缘被大量裁切的 bbox，避免引入噪声样本。
 
 ### 兼容与迁移

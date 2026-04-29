@@ -608,11 +608,56 @@ def _find_label_path(img_path: str) -> str:
     return base + ".txt"
 
 
+def _split_ref_anchor(split_ref: str, dataset_root: str) -> str:
+    """Directory or list file path (same anchor as split image collection)."""
+    return split_ref if split_ref.startswith("/") else os.path.join(dataset_root, split_ref)
+
+
+def _sahi_output_subdir_and_stem(
+    img_path: str,
+    *,
+    split: str,
+    split_ref: str,
+    dataset_root: str,
+) -> tuple[str, str]:
+    """Relative subdirectory under images/<split> (posix) and file stem; mirrors source layout."""
+    p = _split_ref_anchor(split_ref, dataset_root)
+    img_norm = os.path.normpath(img_path)
+    ds_norm = os.path.normpath(dataset_root)
+
+    if os.path.isdir(p):
+        anchor = os.path.normpath(p)
+        try:
+            rel = os.path.relpath(img_norm, anchor)
+        except ValueError:
+            rel = os.path.basename(img_norm)
+        if rel.startswith(".."):
+            rel = os.path.basename(img_norm)
+        rel_dir, name = os.path.split(rel)
+        stem = os.path.splitext(name)[0]
+        return rel_dir.replace("\\", "/"), stem
+
+    try:
+        rel = os.path.relpath(img_norm, ds_norm)
+    except ValueError:
+        return "", os.path.splitext(os.path.basename(img_norm))[0]
+    if rel.startswith(".."):
+        return "", os.path.splitext(os.path.basename(img_norm))[0]
+    norm_rel = rel.replace("\\", "/")
+    for pref in (f"images/{split}/", f"./images/{split}/"):
+        if norm_rel.startswith(pref):
+            tail = norm_rel[len(pref) :]
+            rel_dir, name = os.path.split(tail)
+            return rel_dir, os.path.splitext(name)[0]
+    name = os.path.basename(norm_rel)
+    return os.path.dirname(norm_rel).replace("\\", "/"), os.path.splitext(name)[0]
+
+
 def _collect_split_images(split_ref: str, dataset_root: str) -> list[str]:
     images: list[str] = []
     if not split_ref:
         return images
-    p = split_ref if split_ref.startswith("/") else os.path.join(dataset_root, split_ref)
+    p = _split_ref_anchor(split_ref, dataset_root)
     img_exts = {"jpg", "jpeg", "png", "bmp", "webp", "tif", "tiff"}
     if os.path.isdir(p):
         for root, _, files in os.walk(p):
@@ -664,13 +709,22 @@ def dataset_sahi_slice(req: SahiSliceRequest) -> dict[str, Any]:
 
         out_img_dir = os.path.join(out_dir, "images", split)
         out_lbl_dir = os.path.join(out_dir, "labels", split)
-        os.makedirs(out_img_dir, exist_ok=True)
-        os.makedirs(out_lbl_dir, exist_ok=True)
 
         for img_path in images:
             if not os.path.isfile(img_path):
                 continue
             total_source += 1
+            rel_subdir, stem = _sahi_output_subdir_and_stem(
+                img_path,
+                split=split,
+                split_ref=split_ref,
+                dataset_root=dataset_root,
+            )
+            slice_img_base = os.path.join(out_img_dir, rel_subdir) if rel_subdir else out_img_dir
+            slice_lbl_base = os.path.join(out_lbl_dir, rel_subdir) if rel_subdir else out_lbl_dir
+            os.makedirs(slice_img_base, exist_ok=True)
+            os.makedirs(slice_lbl_base, exist_ok=True)
+
             img = Image.open(img_path).convert("RGB")
             img_w, img_h = img.size
 
@@ -680,7 +734,6 @@ def dataset_sahi_slice(req: SahiSliceRequest) -> dict[str, Any]:
                 with open(label_path, encoding="utf-8") as lf:
                     labels = [ln for ln in lf.read().splitlines() if ln.strip()]
 
-            stem = os.path.splitext(os.path.basename(img_path))[0]
             windows = _slice_windows(
                 img_h, img_w,
                 req.sliceHeight, req.sliceWidth,
@@ -690,12 +743,12 @@ def dataset_sahi_slice(req: SahiSliceRequest) -> dict[str, Any]:
                 slice_img = img.crop((wx1, wy1, wx2, wy2))
                 out_stem = f"{stem}_{idx:04d}"
                 slice_img.save(
-                    os.path.join(out_img_dir, f"{out_stem}.jpg"), "JPEG", quality=95
+                    os.path.join(slice_img_base, f"{out_stem}.jpg"), "JPEG", quality=95
                 )
                 remapped = _remap_yolo_bboxes(
                     labels, img_w, img_h, wx1, wy1, wx2, wy2, req.minAreaRatio
                 )
-                label_out_path = os.path.join(out_lbl_dir, f"{out_stem}.txt")
+                label_out_path = os.path.join(slice_lbl_base, f"{out_stem}.txt")
                 with open(label_out_path, "w", encoding="utf-8") as lf:
                     lf.write("\n".join(remapped) + ("\n" if remapped else ""))
                 total_slices += 1
